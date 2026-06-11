@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -14,6 +15,7 @@ use crate::NoiseRendezvousConnectProvider;
 use crate::client::LazyRemoteExecServerClient;
 use crate::client::http_client::ReqwestHttpClient;
 use crate::client_api::ExecServerTransportParams;
+use crate::client_api::StdioExecServerCommand;
 use crate::environment_provider::DefaultEnvironmentProvider;
 use crate::environment_provider::EnvironmentDefault;
 use crate::environment_provider::EnvironmentProvider;
@@ -309,6 +311,45 @@ impl EnvironmentManager {
             ExecServerTransportParams::NoiseRendezvous { provider, identity },
             self.local_runtime_paths.clone(),
         );
+        self.environments
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(environment_id, Arc::new(environment));
+        Ok(())
+    }
+
+    /// Adds or replaces a named remote environment backed by a stdio command
+    /// (e.g. `docker exec -i <c> <codex> exec-server --listen stdio`).
+    ///
+    /// This is the stdio counterpart to [`upsert_environment`] which only
+    /// accepts WebSocket URLs.  Use this when the remote exec-server is reached
+    /// through an arbitrary subprocess whose stdin/stdout carry the JSON-RPC
+    /// protocol.
+    pub fn upsert_stdio_environment(
+        &self,
+        environment_id: String,
+        program: String,
+        args: Vec<String>,
+        env: HashMap<String, String>,
+        cwd: Option<PathBuf>,
+    ) -> Result<(), ExecServerError> {
+        if environment_id.is_empty() {
+            return Err(ExecServerError::Protocol(
+                "environment id cannot be empty".to_string(),
+            ));
+        }
+        let command = StdioExecServerCommand {
+            program,
+            args,
+            env,
+            cwd,
+        };
+        let transport = ExecServerTransportParams::StdioCommand {
+            command,
+            initialize_timeout: crate::client_api::DEFAULT_REMOTE_EXEC_SERVER_INITIALIZE_TIMEOUT,
+        };
+        let environment =
+            Environment::remote_with_transport(transport, self.local_runtime_paths.clone());
         self.environments
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
