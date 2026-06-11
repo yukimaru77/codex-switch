@@ -13,6 +13,7 @@ use crate::tools::handlers::CodeModeExecuteHandler;
 use crate::tools::handlers::CodeModeWaitHandler;
 use crate::tools::handlers::CurrentTimeHandler;
 use crate::tools::handlers::DynamicToolHandler;
+use crate::tools::handlers::EnvSwitchHandler;
 use crate::tools::handlers::ExecCommandHandler;
 use crate::tools::handlers::ExecCommandHandlerOptions;
 use crate::tools::handlers::GetContextRemainingHandler;
@@ -1026,6 +1027,10 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
         .any(|tool| tool == "test_sync_tool")
     {
         registry.add(TestSyncHandler);
+    }
+
+    if features.enabled(Feature::EnvSwitch) {
+        registry.add(EnvSwitchHandler);
     }
 
     if environment_mode.has_environment() && features.enabled(Feature::ViewImage) {
