@@ -341,6 +341,10 @@ pub enum Feature {
     UseAgentIdentity,
     /// Enable workspace dependency support.
     WorkspaceDependencies,
+    /// Enable the `env_switch` tool to migrate the execution environment into
+    /// a Docker container or SSH host without restarting the session.
+    /// Defaults to OFF; must be explicitly enabled with `features.env_switch = true`.
+    EnvSwitch,
 
     // Removed
     /// Removed compatibility flag retained as a no-op so old configs can
@@ -1681,6 +1685,12 @@ pub const FEATURES: &[FeatureSpec] = &[
         key: "workspace_dependencies",
         stage: Stage::Stable,
         default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::EnvSwitch,
+        key: "env_switch",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
     },
 ];
 
