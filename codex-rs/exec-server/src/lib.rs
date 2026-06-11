@@ -17,6 +17,7 @@ mod noise_relay;
 mod process;
 mod process_sandbox;
 mod regular_file;
+pub mod provision;
 mod relay;
 mod relay_proto;
 mod remote;
