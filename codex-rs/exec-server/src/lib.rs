@@ -19,6 +19,7 @@ mod process_id;
 mod process_sandbox;
 mod protocol;
 mod regular_file;
+pub mod provision;
 mod relay;
 mod relay_proto;
 mod remote;
