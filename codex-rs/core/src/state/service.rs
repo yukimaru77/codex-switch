@@ -25,6 +25,7 @@ use arc_swap::ArcSwapOption;
 use codex_analytics::AnalyticsEventsClient;
 use codex_core_plugins::PluginsManager;
 use codex_exec_server::EnvironmentManager;
+use codex_exec_server::provision::RemoteLauncher;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ExtensionDataInit;
 use codex_extension_api::ExtensionRegistry;
@@ -33,6 +34,7 @@ use codex_login::AuthManager;
 use codex_mcp::McpRuntime;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_otel::SessionTelemetry;
+use codex_protocol::ThreadId;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
 use codex_rollout::state_db::StateDbHandle;
 use codex_rollout_trace::ThreadTraceContext;
@@ -97,4 +99,11 @@ pub(crate) struct SessionServices {
     /// working directories.  Resolved by `resolve_tool_environment` when the id is not found in
     /// the turn's frozen `turn_environments` list.
     pub(crate) dynamic_environment_cwds: Mutex<HashMap<String, AbsolutePathBuf>>,
+    /// Tracks the most-recently registered [`RemoteLauncher`] per thread.
+    ///
+    /// Updated every time `env_switch` successfully registers a remote environment.
+    /// Used as the base launcher when `env_switch` is called in relative mode
+    /// (`extend` is present but `base` is absent).  Keyed by [`ThreadId`] so
+    /// that sub-agent threads each maintain their own independent cursor.
+    pub(crate) last_remote_launcher: Mutex<HashMap<ThreadId, RemoteLauncher>>,
 }
