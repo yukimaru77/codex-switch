@@ -194,6 +194,7 @@ async fn handle_local_switch(
     }
 
     set_thread_environments(session, host_cwd.clone(), selections).await?;
+    session.emit_thread_settings_applied(turn).await;
 
     let message = "env_switch complete: reverted to the local host environment. \
         The change takes effect on your NEXT step — end this step immediately \
@@ -341,6 +342,7 @@ async fn handle_remote_switch(
         }],
     )
     .await?;
+    session.emit_thread_settings_applied(turn).await;
 
     // --- Step 6: schedule a self-continuation turn so the new env takes effect --
     let message = format!(
