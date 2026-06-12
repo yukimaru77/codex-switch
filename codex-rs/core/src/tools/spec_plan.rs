@@ -884,7 +884,11 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
 
     let allow_login_shell = any_environment_allows_login_shell(context.environments);
     let exec_permission_approvals_enabled = features.enabled(Feature::ExecPermissionApprovals);
-    let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
+    // Include environment_id in tool specs when multiple environments are
+    // present OR when EnvSwitch is enabled (so the model can target a
+    // dynamically-registered environment even from a single-environment session).
+    let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple)
+        || features.enabled(Feature::EnvSwitch);
     let supports_shell_command = context.environments.single_local_environment().is_some();
     let shell_command_options = ShellCommandHandlerOptions {
         backend_config: shell_command_backend_for_features(features),
@@ -1016,7 +1020,8 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
 
     if environment_mode.has_environment() && turn_context.model_info.apply_patch_tool_type.is_some()
     {
-        let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
+        let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple)
+            || features.enabled(Feature::EnvSwitch);
         registry.add(ApplyPatchHandler::new(include_environment_id));
     }
 
@@ -1034,7 +1039,8 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
     }
 
     if environment_mode.has_environment() && features.enabled(Feature::ViewImage) {
-        let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
+        let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple)
+            || features.enabled(Feature::EnvSwitch);
         registry.add(ViewImageHandler::new(ViewImageToolOptions {
             can_request_original_image_detail: can_request_original_image_detail(
                 &turn_context.model_info,
