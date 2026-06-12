@@ -4895,3 +4895,40 @@ async fn env_switch_local_revert_restores_cwd_in_status_line() {
         Some(format!("gpt-5.4 · {expected_cwd}"))
     );
 }
+
+/// A docker container name that exceeds the 20-grapheme limit is truncated in
+/// the status line, preserving the "🐳 " prefix so the environment type remains
+/// immediately recognisable.
+#[tokio::test]
+async fn env_switch_docker_badge_long_name_is_truncated_in_status_line() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.config.tui_status_line = Some(vec!["current-dir".to_string()]);
+    chat.config.cwd = test_path_buf("/tmp/project").abs();
+    // Container name is 40 graphemes — well over the 20-grapheme limit.
+    chat.env_switch_badge = Some("🐳 a-very-long-container-name-that-exceeds-limit".to_string());
+    chat.refresh_status_line();
+
+    // Expect: prefix preserved, name truncated to 17 graphemes + "..."
+    assert_eq!(
+        status_line_text(&chat),
+        Some("🐳 a-very-long-conta...".to_string())
+    );
+}
+
+/// An SSH host name that exceeds the 20-grapheme limit is truncated in the
+/// status line, preserving the "🔗 " prefix.
+#[tokio::test]
+async fn env_switch_ssh_badge_long_name_is_truncated_in_status_line() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.config.tui_status_line = Some(vec!["current-dir".to_string()]);
+    chat.config.cwd = test_path_buf("/tmp/project").abs();
+    // Host name is 40 graphemes — well over the 20-grapheme limit.
+    chat.env_switch_badge = Some("🔗 a-very-long-hostname-that-exceeds-the-limit".to_string());
+    chat.refresh_status_line();
+
+    // Expect: prefix preserved, name truncated to 17 graphemes + "..."
+    assert_eq!(
+        status_line_text(&chat),
+        Some("🔗 a-very-long-hostn...".to_string())
+    );
+}
