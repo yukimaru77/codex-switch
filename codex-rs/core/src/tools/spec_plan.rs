@@ -1114,7 +1114,7 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
         registry.add(TestSyncHandler);
     }
 
-    if features.enabled(Feature::EnvSwitch) {
+    if features.enabled(Feature::EnvSwitch) && environment_mode.has_environment() {
         registry.add(EnvSwitchHandler);
     }
 

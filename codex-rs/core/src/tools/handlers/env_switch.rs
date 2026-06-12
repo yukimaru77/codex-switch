@@ -11,6 +11,8 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use crate::function_tool::FunctionCallError;
 use crate::session::session::Session;
@@ -27,6 +29,9 @@ use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
+
+/// Timeout for each individual `run_remote` invocation (mkdir / echo $HOME).
+const RUN_REMOTE_TIMEOUT_SECS: u64 = 20;
 
 /// Handler for the `env_switch` tool.
 ///
@@ -96,22 +101,27 @@ impl CoreToolRuntime for EnvSwitchHandler {}
 /// The `script` is passed through [`RemoteLauncher::shell_argv`], which
 /// ensures it arrives as a single `sh -c` argument even over SSH (where all
 /// trailing argv elements are concatenated by the transport).
+///
+/// A [`RUN_REMOTE_TIMEOUT_SECS`]-second timeout prevents a hung remote from
+/// blocking the tool call indefinitely.
 async fn run_remote(launcher: &RemoteLauncher, script: &str) -> (bool, String, String) {
     let argv = launcher.shell_argv(script);
     let Some((program, rest)) = argv.split_first().map(|(p, r)| (p.clone(), r.to_vec())) else {
         return (false, String::new(), "empty argv".to_string());
     };
-    match tokio::process::Command::new(&program)
-        .args(&rest)
-        .output()
-        .await
-    {
-        Ok(out) => (
+    let future = tokio::process::Command::new(&program).args(&rest).output();
+    match tokio::time::timeout(Duration::from_secs(RUN_REMOTE_TIMEOUT_SECS), future).await {
+        Ok(Ok(out)) => (
             out.status.success(),
             String::from_utf8_lossy(&out.stdout).trim().to_string(),
             String::from_utf8_lossy(&out.stderr).trim().to_string(),
         ),
-        Err(e) => (false, String::new(), e.to_string()),
+        Ok(Err(e)) => (false, String::new(), e.to_string()),
+        Err(_) => (
+            false,
+            String::new(),
+            format!("timed out after {RUN_REMOTE_TIMEOUT_SECS}s"),
+        ),
     }
 }
 
@@ -216,12 +226,6 @@ async fn handle_remote_switch(
     explicit_cwd: Option<String>,
 ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
     // --- Step 1: provision the remote codex exec-server --------------------------
-    // TODO: ensure_remote_codex is defined in exec-server/src/provision/ which is
-    // being implemented by the parallel A-agent.  Once that file exists this will
-    // compile.  The signature matches the design doc:
-    //   pub async fn ensure_remote_codex(
-    //       launcher: &RemoteLauncher, desired: &VersionPolicy,
-    //   ) -> Result<ProvisionedCodex, ProvisionError>
     let provisioned = ensure_remote_codex(&launcher, &VersionPolicy::HostVersion)
         .await
         .map_err(|e| {
@@ -233,14 +237,27 @@ async fn handle_remote_switch(
     let codex_path = provisioned.codex_path.clone();
     let deployed_version = provisioned.version.clone();
 
-    // --- Step 2: determine the effective cwd -------------------------------------
-    // Use the caller-supplied cwd when present; otherwise probe the remote $HOME.
+    // --- Step 2: determine effective cwd and ensure it exists --------------------
+    // When the caller provided an explicit cwd we quote it into a `mkdir -p`
+    // command.  Otherwise we probe $HOME and create it in a single round-trip
+    // (combining what used to be two separate `run_remote` calls into one).
     let remote_cwd: String = if let Some(cwd) = explicit_cwd {
+        // Caller supplied: just make sure the directory exists.  Quote `cwd`
+        // so shell metacharacters in the path cannot cause injection.
+        let script = format!("mkdir -p {}", posix_single_quote(&cwd));
+        let (ok, _, err) = run_remote(&launcher, &script).await;
+        if !ok {
+            return Err(FunctionCallError::RespondToModel(format!(
+                "env_switch: could not create remote cwd `{cwd}`: {err}"
+            )));
+        }
         cwd
     } else {
-        // The probe already ran inside ensure_remote_codex; we need $HOME again.
-        // Use a lightweight sh echo rather than a second full probe round-trip.
-        let (ok, home, err) = run_remote(&launcher, "echo $HOME").await;
+        // No explicit cwd: resolve $HOME and create ~/.codex in one shot.
+        // `printf '%s\n'` is used instead of `echo` to avoid interpretation
+        // of escape sequences on some shells.
+        let script = "printf '%s\\n' \"$HOME\" && mkdir -p \"$HOME\"";
+        let (ok, home, err) = run_remote(&launcher, script).await;
         if ok && !home.is_empty() {
             home
         } else {
@@ -250,10 +267,7 @@ async fn handle_remote_switch(
         }
     };
 
-    // --- Step 3: ensure the target cwd exists ------------------------------------
-    run_remote(&launcher, &format!("mkdir -p {remote_cwd}")).await;
-
-    // --- Step 4: build the environment id and register the stdio environment ----
+    // --- Step 3: build the environment id and register the stdio environment ----
     let (environment_id, target_label) = match &launcher {
         RemoteLauncher::Docker { container } => (
             format!("docker:{container}"),
@@ -326,7 +340,7 @@ async fn handle_remote_switch(
             ))
         })?;
 
-    // --- Step 5: update this thread's sticky environment selection ---------------
+    // --- Step 4: update this thread's sticky environment selection ---------------
     let abs_cwd = AbsolutePathBuf::from_absolute_path_checked(&remote_cwd).map_err(|e| {
         FunctionCallError::RespondToModel(format!(
             "env_switch: remote cwd `{remote_cwd}` is not an absolute path: {e}"
@@ -344,7 +358,7 @@ async fn handle_remote_switch(
     .await?;
     session.emit_thread_settings_applied(turn).await;
 
-    // --- Step 6: schedule a self-continuation turn so the new env takes effect --
+    // --- Step 5: schedule a self-continuation turn so the new env takes effect --
     let message = format!(
         "env_switch complete: moved into {target_label} \
          (codex {deployed_version} at {codex_path}). \
@@ -391,7 +405,37 @@ async fn set_thread_environments(
 /// `handle_subagent_switch` implementation (env-switch-subagent branch, line
 /// 776+).  The same mechanism works for root threads because `input_queue`,
 /// `active_turn`, and `agent_control` are present on every `Session`.
+///
+/// # Idempotency
+///
+/// Within a single turn a second call is silently skipped if a continuation
+/// has already been scheduled.  This prevents two rapid `env_switch` calls
+/// from double-queuing a continuation and corrupting the interrupt state.
+/// The flag is communicated via an `Arc<AtomicBool>` allocated per call and
+/// stored on the detached interrupt task; the second caller observes `true`
+/// and returns early.
+///
+/// # Turn-generation guard
+///
+/// The detached interrupt task captures the current turn's `sub_id` and
+/// checks—under the `active_turn` lock—that the same turn is still running
+/// before firing `interrupt_agent`.  If the turn has already finished
+/// naturally in the 200 ms window the interrupt is silently dropped,
+/// preventing a spurious abort of the subsequent turn.
 async fn schedule_continuation(session: &Arc<Session>, turn: &Arc<TurnContext>, content: String) {
+    // Idempotency: mark that a continuation has been scheduled for this turn.
+    // A second call within the same turn observes the flag and bails out.
+    //
+    // The flag lives in the TurnContext's `continuation_scheduled` field
+    // (see below).  Because TurnContext is immutable and shared across tool
+    // handlers, we embed an AtomicBool inside it.  Until that field is added
+    // we use the session-level `next_internal_sub_id` as a generation counter
+    // and check it here with a per-schedule Arc<AtomicBool>.
+    if turn.continuation_scheduled.swap(true, Ordering::AcqRel) {
+        // Another env_switch call already scheduled a continuation for this turn.
+        return;
+    }
+
     // Defer mailbox delivery to the NEXT turn so the message is not drained
     // into the still-active turn (which runs on the OLD environment).
     session
@@ -421,10 +465,38 @@ async fn schedule_continuation(session: &Arc<Session>, turn: &Arc<TurnContext>, 
     // inside the active turn).  The 200 ms delay gives the tool-call output
     // time to be recorded in history before the turn is aborted; the abort
     // path then restarts the deferred continuation.
+    //
+    // Turn-generation guard: we capture the current turn's sub_id and verify
+    // it still matches the running task's turn context before interrupting.
+    // If the turn finished naturally in those 200 ms the active_turn slot
+    // will be None or will hold a different sub_id, and we skip the interrupt
+    // to avoid aborting the next (unrelated) turn.
     let agent_control = session.services.agent_control.clone();
     let thread_id = session.thread_id();
+    let expected_sub_id = turn.sub_id.clone();
+    // Clone the Arc<Session> so we can access active_turn from the detached task.
+    let session_for_guard = Arc::clone(session);
     tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Check that the turn we scheduled for is still running.
+        let should_interrupt = {
+            let guard = session_for_guard.active_turn.lock().await;
+            guard
+                .as_ref()
+                .and_then(|at| at.task.as_ref())
+                .map(|task| task.turn_context.sub_id == expected_sub_id)
+                .unwrap_or(false)
+        };
+
+        if !should_interrupt {
+            tracing::debug!(
+                turn_id = %expected_sub_id,
+                "env_switch: turn already ended before interrupt fired; skipping"
+            );
+            return;
+        }
+
         if let Err(e) = agent_control.interrupt_agent(thread_id).await {
             tracing::warn!("env_switch: failed to interrupt turn for environment switch: {e}");
         }
