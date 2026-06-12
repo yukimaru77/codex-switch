@@ -4069,3 +4069,54 @@ async fn chatwidget_tall() {
         normalize_snapshot_paths(term.backend().vt100().screen().contents())
     );
 }
+
+/// When `env_switch` moves execution into a docker container, the status line
+/// `current-dir` slot shows the container badge instead of the local cwd.
+#[tokio::test]
+async fn env_switch_docker_badge_replaces_cwd_in_status_line() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.config.tui_status_line = Some(vec!["model".to_string(), "current-dir".to_string()]);
+    chat.config.cwd = test_path_buf("/tmp/project").abs();
+    chat.env_switch_badge = Some("🐳 env-remote-test".to_string());
+    chat.refresh_status_line();
+
+    assert_eq!(
+        status_line_text(&chat),
+        Some("gpt-5.4 · 🐳 env-remote-test".to_string())
+    );
+}
+
+/// When `env_switch` moves execution to an SSH host, the status line shows
+/// the SSH badge.
+#[tokio::test]
+async fn env_switch_ssh_badge_replaces_cwd_in_status_line() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.config.tui_status_line = Some(vec!["model".to_string(), "current-dir".to_string()]);
+    chat.config.cwd = test_path_buf("/tmp/project").abs();
+    chat.env_switch_badge = Some("🔗 dgx".to_string());
+    chat.refresh_status_line();
+
+    assert_eq!(
+        status_line_text(&chat),
+        Some("gpt-5.4 · 🔗 dgx".to_string())
+    );
+}
+
+/// After reverting to local (`env_switch` target=local), the badge is cleared
+/// and the cwd is shown again.
+#[tokio::test]
+async fn env_switch_local_revert_restores_cwd_in_status_line() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.config.tui_status_line = Some(vec!["model".to_string(), "current-dir".to_string()]);
+    chat.config.cwd = test_path_buf("/tmp/project").abs();
+    // Simulate an earlier docker switch followed by revert.
+    chat.env_switch_badge = Some("🐳 env-remote-test".to_string());
+    chat.env_switch_badge = None;
+    chat.refresh_status_line();
+
+    let expected_cwd = test_path_display("/tmp/project");
+    assert_eq!(
+        status_line_text(&chat),
+        Some(format!("gpt-5.4 · {expected_cwd}"))
+    );
+}

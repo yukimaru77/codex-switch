@@ -32,6 +32,7 @@ fn thread_settings_for_test(
             },
             multi_agent_mode: Default::default(),
             personality: Some(Personality::Pragmatic),
+            active_environment_id: None,
         },
     }
 }
