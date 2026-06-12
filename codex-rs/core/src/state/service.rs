@@ -25,6 +25,7 @@ use arc_swap::ArcSwap;
 use arc_swap::ArcSwapOption;
 use codex_analytics::AnalyticsEventsClient;
 use codex_core_plugins::PluginsManager;
+use codex_exec_server::EnvironmentManager;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ExtensionDataInit;
 use codex_extension_api::ExtensionRegistry;
@@ -41,6 +42,7 @@ use codex_rollout::state_db::StateDbHandle;
 use codex_rollout_trace::ThreadTraceContext;
 use codex_thread_store::LiveThread;
 use codex_thread_store::ThreadStore;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::path::PathBuf;
 use tokio::runtime::Handle;
 use tokio::sync::Mutex;
@@ -99,6 +101,13 @@ pub(crate) struct SessionServices {
     pub(crate) code_mode_service: CodeModeService,
     pub(crate) tool_search_handler_cache: ToolSearchHandlerCache,
     pub(crate) turn_environments: Arc<ThreadEnvironments>,
+    /// Shared process-level environment registry. Sessions carry an `Arc` handle so they can pass
+    /// the same manager through child-thread spawn paths without reconstructing it.
+    pub(crate) environment_manager: Arc<EnvironmentManager>,
+    /// Maps dynamically-registered environment ids (registered via `env_switch`) to their
+    /// working directories.  Resolved by `resolve_tool_environment` when the id is not found in
+    /// the turn's frozen `turn_environments` list.
+    pub(crate) dynamic_environment_cwds: Mutex<HashMap<String, AbsolutePathBuf>>,
 }
 
 impl SessionServices {
