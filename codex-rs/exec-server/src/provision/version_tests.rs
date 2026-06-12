@@ -49,3 +49,23 @@ fn exact_policy_resolves_synchronously() {
     let v = rt.block_on(policy.resolve()).expect("resolve");
     assert_eq!(v, "3.0.0");
 }
+
+#[test]
+fn exact_policy_reuses_only_on_exact_match() {
+    let policy = VersionPolicy::Exact("1.2.3".to_string());
+    assert!(policy.is_satisfied_by_existing("1.2.3"));
+    assert!(!policy.is_satisfied_by_existing("1.2.4"));
+}
+
+#[test]
+fn latest_policy_never_reuses_offline() {
+    // Latest must always re-check over the network, even if something exists.
+    assert!(!VersionPolicy::Latest.is_satisfied_by_existing("9.9.9"));
+}
+
+#[test]
+fn host_version_dev_build_reuses_any_existing() {
+    // The test binary's CARGO_PKG_VERSION is the dev placeholder "0.0.0", so a
+    // dev host reuses whatever codex is already on the remote (no Latest call).
+    assert!(VersionPolicy::HostVersion.is_satisfied_by_existing("0.131.0"));
+}
