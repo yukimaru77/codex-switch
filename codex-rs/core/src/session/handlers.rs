@@ -50,6 +50,7 @@ use codex_protocol::request_permissions::RequestPermissionsResponse;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 
 use crate::context_manager::is_user_turn_boundary;
+use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_protocol::dynamic_tools::DynamicToolResponse;
 use codex_protocol::mcp::RequestId as ProtocolRequestId;
 use codex_rmcp_client::ElicitationAction;
@@ -166,9 +167,18 @@ async fn thread_settings_update(
 }
 
 async fn thread_settings_applied_event(sess: &Session) -> EventMsg {
-    let snapshot = {
+    let (snapshot, active_environment_id) = {
         let state = sess.state.lock().await;
-        state.session_configuration.thread_config_snapshot()
+        let snapshot = state.session_configuration.thread_config_snapshot();
+        // Report the first sticky environment as the active one.  The local
+        // environment ("local") maps to no badge; any other value (e.g.
+        // "docker:container" or "ssh:host") is surfaced as a status badge.
+        let active_environment_id = snapshot
+            .environment_selections()
+            .first()
+            .map(|sel| sel.environment_id.clone())
+            .filter(|id| id != LOCAL_ENVIRONMENT_ID);
+        (snapshot, active_environment_id)
     };
     let cwd = snapshot.cwd().clone();
     EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent {
@@ -181,6 +191,7 @@ async fn thread_settings_applied_event(sess: &Session) -> EventMsg {
             permission_profile: snapshot.permission_profile,
             active_permission_profile: snapshot.active_permission_profile,
             cwd,
+            active_environment_id,
             reasoning_effort: snapshot.reasoning_effort,
             reasoning_summary: snapshot.reasoning_summary,
             personality: snapshot.personality,

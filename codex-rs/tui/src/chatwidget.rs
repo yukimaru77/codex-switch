@@ -554,6 +554,11 @@ pub(crate) struct ChatWidget {
     status_account_display: Option<StatusAccountDisplay>,
     runtime_model_provider_base_url: Option<String>,
     pub(crate) remote_connection: Option<RemoteConnectionStatus>,
+    /// Status-badge text shown in the status line when the thread's execution
+    /// environment has been switched via `env_switch`.  `None` means the thread
+    /// is running locally and no badge is displayed.
+    /// Example values: `"🐳 env-remote-test"`, `"🔗 dgx"`.
+    pub(crate) env_switch_badge: Option<String>,
     token_info: Option<TokenUsageInfo>,
     rate_limit_snapshots_by_limit_id: BTreeMap<String, RateLimitSnapshotDisplay>,
     refreshing_status_outputs: Vec<(u64, StatusHistoryHandle)>,
