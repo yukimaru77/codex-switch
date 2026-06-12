@@ -175,6 +175,11 @@ pub(crate) fn thread_response_active_permission_profile(
 pub(crate) fn thread_settings_from_config_snapshot(
     config_snapshot: &ThreadConfigSnapshot,
 ) -> ThreadSettings {
+    let active_environment_id = config_snapshot
+        .environment_selections()
+        .first()
+        .map(|sel| sel.environment_id.clone())
+        .filter(|id| id != codex_exec_server::LOCAL_ENVIRONMENT_ID);
     ThreadSettings {
         cwd: config_snapshot.cwd().clone(),
         approval_policy: config_snapshot.approval_policy.into(),
@@ -191,6 +196,50 @@ pub(crate) fn thread_settings_from_config_snapshot(
         collaboration_mode: config_snapshot.collaboration_mode.clone(),
         multi_agent_mode: MultiAgentMode::ExplicitRequestOnly,
         personality: config_snapshot.personality,
+        active_environment_id,
+    }
+}
+
+pub(crate) fn thread_settings_from_core_snapshot(
+    snapshot: codex_protocol::protocol::ThreadSettingsSnapshot,
+) -> ThreadSettings {
+    let codex_protocol::protocol::ThreadSettingsSnapshot {
+        model,
+        model_provider_id,
+        service_tier,
+        approval_policy,
+        approvals_reviewer,
+        permission_profile,
+        active_permission_profile,
+        cwd,
+        active_environment_id,
+        reasoning_effort,
+        reasoning_summary,
+        personality,
+        collaboration_mode,
+    } = snapshot;
+    let sandbox_policy = codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
+        &permission_profile,
+        cwd.as_path(),
+    )
+    .into();
+    ThreadSettings {
+        sandbox_policy,
+        cwd,
+        approval_policy: approval_policy.into(),
+        approvals_reviewer: approvals_reviewer.into(),
+        active_permission_profile: thread_response_active_permission_profile(
+            active_permission_profile,
+        ),
+        model,
+        model_provider: model_provider_id,
+        service_tier,
+        effort: reasoning_effort,
+        summary: reasoning_summary,
+        collaboration_mode,
+        multi_agent_mode: MultiAgentMode::ExplicitRequestOnly,
+        personality,
+        active_environment_id,
     }
 }
 

@@ -6,6 +6,8 @@ use crate::session::SessionSettingsUpdate;
 use crate::session::session::Session;
 use codex_diagnostics::Gauge;
 use codex_diagnostics::GaugeGuard;
+use crate::user_message_admission::UserMessageAdmission;
+use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_exec_server::SelectedCapabilityRootsStatus;
 use codex_extension_api::ThreadIdleCause;
 use codex_features::Feature;
@@ -120,6 +122,46 @@ impl ThreadConfigSnapshot {
             &self.permission_profile,
             self.cwd().as_path(),
         )
+    }
+
+    pub fn into_thread_settings_snapshot(self) -> ThreadSettingsSnapshot {
+        let cwd = self.cwd().clone();
+        let active_environment_id = self
+            .environment_selections()
+            .first()
+            .map(|selection| selection.environment_id.clone())
+            .filter(|environment_id| environment_id != LOCAL_ENVIRONMENT_ID);
+        ThreadSettingsSnapshot {
+            model: self.model,
+            model_provider_id: self.model_provider_id,
+            service_tier: self.service_tier,
+            approval_policy: self.approval_policy,
+            approvals_reviewer: self.approvals_reviewer,
+            permission_profile: self.permission_profile,
+            active_permission_profile: self.active_permission_profile,
+            cwd,
+            active_environment_id,
+            reasoning_effort: self.reasoning_effort,
+            reasoning_summary: self.reasoning_summary,
+            personality: self.personality,
+            collaboration_mode: self.collaboration_mode,
+        }
+    }
+
+    fn into_thread_settings_overrides(self) -> CodexThreadSettingsOverrides {
+        CodexThreadSettingsOverrides {
+            environments: Some(self.environments),
+            profile_workspace_roots: Some(self.profile_workspace_roots),
+            approval_policy: Some(self.approval_policy),
+            approvals_reviewer: Some(self.approvals_reviewer),
+            permission_profile: Some(self.permission_profile),
+            active_permission_profile: self.active_permission_profile,
+            summary: self.reasoning_summary,
+            service_tier: Some(self.service_tier),
+            collaboration_mode: Some(self.collaboration_mode),
+            personality: self.personality,
+            ..Default::default()
+        }
     }
 }
 
