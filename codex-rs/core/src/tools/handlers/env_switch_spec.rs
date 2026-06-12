@@ -12,19 +12,30 @@ pub(crate) const ENV_SWITCH_TOOL_NAME: &str = "env_switch";
 /// subsequent shell / file tools run inside a Docker container, over SSH, or
 /// back on the local host — without restarting the session.
 ///
-/// The tool supports two mutually-exclusive ways of specifying the target:
+/// The tool supports three mutually-exclusive ways of specifying the target:
 ///
-/// 1. **Legacy single-hop** (`target` + optional `container` / `host`): kept
+/// 1. **Relative mode** (`extend` + optional `base`): adds one transport layer
+///    on top of an existing environment without rewriting the full hop list.
+///    `base` is the id of the parent environment (e.g. `"ssh:dgx"`); when
+///    omitted the thread's most-recently-switched-to remote environment is used.
+///    `extend` describes the single hop to append (same schema as one element
+///    of `hops`).
+///
+///    Example: already on `ssh:dgx`, enter container `c`:
+///    `base: "ssh:dgx", extend: {"type":"docker","container":"c"}`
+///    → environment id becomes `"ssh:dgx>docker:c"`.
+///
+/// 2. **Legacy single-hop** (`target` + optional `container` / `host`): kept
 ///    for backward-compatibility and ergonomics when only one transport layer
 ///    is needed.
 ///
-/// 2. **Multi-hop** (`hops` array, outer-to-inner): allows composing an
+/// 3. **Multi-hop** (`hops` array, outer-to-inner): allows composing an
 ///    arbitrary number of SSH and Docker transport layers, e.g. SSH into a
 ///    remote GPU box and then `docker exec` into a container running there.
 ///
 ///    Example: `hops: [{"type":"ssh","host":"dgx"},{"type":"docker","container":"c"}]`
 pub(crate) fn create_env_switch_tool() -> ToolSpec {
-    // Schema for a single hop element used in the `hops` array.
+    // Schema for a single hop element used in the `hops` array and `extend`.
     let hop_schema = JsonSchema::object(
         BTreeMap::from([
             (
@@ -65,7 +76,7 @@ pub(crate) fn create_env_switch_tool() -> ToolSpec {
                 Some(
                     "Single-hop shorthand. Use `docker` to enter a running container, \
                      `ssh` to enter a remote host (key auth required), and `local` to return \
-                     to the host machine. Ignored when `hops` is provided."
+                     to the host machine. Ignored when `hops` or `extend` is provided."
                         .to_string(),
                 ),
             ),
@@ -74,7 +85,7 @@ pub(crate) fn create_env_switch_tool() -> ToolSpec {
             "container".to_string(),
             JsonSchema::string(Some(
                 "Name or ID of the running Docker container. Required when target is `docker` \
-                 and `hops` is not provided."
+                 and `hops` / `extend` are not provided."
                     .to_string(),
             )),
         ),
@@ -82,7 +93,7 @@ pub(crate) fn create_env_switch_tool() -> ToolSpec {
             "host".to_string(),
             JsonSchema::string(Some(
                 "SSH destination in `[user@]host` form. Required when target is `ssh` \
-                 and `hops` is not provided."
+                 and `hops` / `extend` are not provided."
                     .to_string(),
             )),
         ),
@@ -97,7 +108,7 @@ pub(crate) fn create_env_switch_tool() -> ToolSpec {
         (
             "hops".to_string(),
             JsonSchema::array(
-                hop_schema,
+                hop_schema.clone(),
                 Some(
                     "Ordered list of transport hops from outermost to innermost. \
                      When provided, `target` / `container` / `host` are ignored. \
@@ -106,6 +117,31 @@ pub(crate) fn create_env_switch_tool() -> ToolSpec {
                         .to_string(),
                 ),
             ),
+        ),
+        (
+            "base".to_string(),
+            JsonSchema::string(Some(
+                "Relative mode: the environment_id of the existing environment to build upon \
+                 (e.g. `\"ssh:dgx\"`). When omitted together with `extend`, the thread's \
+                 most-recently-activated remote environment is used as the base. \
+                 Ignored unless `extend` is also provided."
+                    .to_string(),
+            )),
+        ),
+        (
+            "extend".to_string(),
+            {
+                let mut s = hop_schema;
+                s.description = Some(
+                    "Relative mode: a single hop to append to the base environment's hop list. \
+                     When present, `hops` / `target` / `container` / `host` are ignored. \
+                     Example: already on `ssh:dgx`, enter container `c`: \
+                     extend={\"type\":\"docker\",\"container\":\"c\"} \
+                     (optionally with base=\"ssh:dgx\")."
+                        .to_string(),
+                );
+                s
+            },
         ),
     ]);
 
@@ -117,6 +153,10 @@ pub(crate) fn create_env_switch_tool() -> ToolSpec {
             remote host over SSH, and target=`local` to return to the local machine. \
             For multi-hop routing (e.g. SSH into a remote host then docker exec into a \
             container), use the `hops` array instead of `target`. \
+            For relative mode (add one layer to the current environment), supply `extend` \
+            with an optional `base` environment_id — for example, after switching to \
+            `ssh:dgx`, call env_switch with base=\"ssh:dgx\" and \
+            extend={\"type\":\"docker\",\"container\":\"c\"} to reach `ssh:dgx>docker:c`. \
             The remote codex exec-server is provisioned automatically if it is absent."
             .to_string(),
         strict: false,
@@ -124,8 +164,8 @@ pub(crate) fn create_env_switch_tool() -> ToolSpec {
         parameters: JsonSchema::object(
             properties,
             // target is required only for the legacy single-hop path; with
-            // `hops` it is ignored.  We keep it in `required` so the legacy
-            // path continues to work without changes to callers.
+            // `hops` or `extend` it is ignored.  We keep it in `required` so
+            // the legacy path continues to work without changes to callers.
             Some(vec!["target".to_string()]),
             Some(false.into()),
         ),
