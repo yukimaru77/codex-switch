@@ -63,8 +63,12 @@ impl RequestPermissionsHandler {
         };
 
         let environment_args: RequestPermissionsEnvironmentArgs = parse_arguments(&arguments)?;
-        let Some(turn_environment) =
-            resolve_tool_environment(turn.as_ref(), environment_args.environment_id.as_deref())?
+        let Some(turn_environment) = resolve_tool_environment(
+            &session,
+            turn.as_ref(),
+            environment_args.environment_id.as_deref(),
+        )
+        .await?
         else {
             return Err(FunctionCallError::RespondToModel(
                 "request_permissions requires a primary environment".to_string(),

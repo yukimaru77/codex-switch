@@ -5186,6 +5186,8 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         code_mode_service: crate::tools::code_mode::CodeModeService::new(),
         tool_search_handler_cache: Default::default(),
         turn_environments: Arc::clone(&turn_environments),
+        environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+        dynamic_environment_cwds: Mutex::new(HashMap::new()),
     };
 
     let plugins_input = per_turn_config.plugins_config_input();
@@ -7251,6 +7253,8 @@ where
         code_mode_service: crate::tools::code_mode::CodeModeService::new(),
         tool_search_handler_cache: Default::default(),
         turn_environments: Arc::clone(&turn_environments),
+        environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+        dynamic_environment_cwds: Mutex::new(HashMap::new()),
     };
 
     let plugins_input = per_turn_config.plugins_config_input();
