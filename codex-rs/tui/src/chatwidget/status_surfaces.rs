@@ -564,10 +564,17 @@ impl ChatWidget {
             StatusLineItem::ModelWithReasoning => Some(self.model_with_reasoning_display_name()),
             StatusLineItem::Reasoning => Some(self.reasoning_display_name()),
             StatusLineItem::CurrentDir => {
-                Some(format_directory_display(
-                    self.status_line_cwd(),
-                    /*max_width*/ None,
-                ))
+                // When env_switch has moved this session into a remote
+                // environment (docker/ssh), show the environment badge
+                // instead of the (now-irrelevant) local cwd.
+                if let Some(badge) = &self.env_switch_badge {
+                    Some(badge.clone())
+                } else {
+                    Some(format_directory_display(
+                        self.status_line_cwd(),
+                        /*max_width*/ None,
+                    ))
+                }
             }
             StatusLineItem::ProjectRoot => self.status_line_project_root_name(),
             StatusLineItem::GitBranch => self.status_line_branch.clone(),

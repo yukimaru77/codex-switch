@@ -241,6 +241,7 @@ mod tests {
                 },
             },
             personality: None,
+            active_environment_id: None,
         }
     }
 }

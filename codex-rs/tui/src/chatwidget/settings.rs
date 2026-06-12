@@ -475,6 +475,13 @@ impl ChatWidget {
     fn apply_thread_settings(&mut self, mut settings: ThreadSettings) {
         let cwd_changed = self.config.cwd != settings.cwd;
         self.apply_thread_settings_cwd(settings.cwd.clone());
+        // Update the env_switch status badge from the active environment id.
+        // "docker:container" → "🐳 container", "ssh:host" → "🔗 host",
+        // None (local environment) → no badge.
+        self.env_switch_badge = settings
+            .active_environment_id
+            .as_deref()
+            .and_then(env_switch_badge_from_environment_id);
         self.config.model_provider_id = settings.model_provider.clone();
         self.set_service_tier(settings.service_tier.clone());
         self.set_approval_policy(settings.approval_policy);
@@ -733,5 +740,72 @@ impl ChatWidget {
                 /*personality*/ None,
             ),
         });
+    }
+}
+
+/// Converts an `active_environment_id` from a [`ThreadSettings`] update into a
+/// status-badge string for the TUI status line.
+///
+/// - `"docker:<name>"` → `"🐳 <name>"`
+/// - `"ssh:<host>"` → `"🔗 <host>"`
+/// - Any other non-empty value is returned as-is so future environment types
+///   surface something rather than nothing.
+/// - Returns `None` for an empty string so callers can use `Option::and_then`.
+pub(super) fn env_switch_badge_from_environment_id(id: &str) -> Option<String> {
+    if let Some(name) = id.strip_prefix("docker:") {
+        if !name.is_empty() {
+            return Some(format!("🐳 {name}"));
+        }
+    } else if let Some(host) = id.strip_prefix("ssh:") {
+        if !host.is_empty() {
+            return Some(format!("🔗 {host}"));
+        }
+    } else if !id.is_empty() {
+        return Some(id.to_string());
+    }
+    None
+}
+
+#[cfg(test)]
+mod badge_tests {
+    use super::env_switch_badge_from_environment_id;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn docker_environment_id_produces_whale_badge() {
+        assert_eq!(
+            env_switch_badge_from_environment_id("docker:env-remote-test"),
+            Some("🐳 env-remote-test".to_string())
+        );
+    }
+
+    #[test]
+    fn ssh_environment_id_produces_link_badge() {
+        assert_eq!(
+            env_switch_badge_from_environment_id("ssh:dgx"),
+            Some("🔗 dgx".to_string())
+        );
+    }
+
+    #[test]
+    fn local_environment_id_produces_no_badge() {
+        // The "local" id is filtered before env_switch_badge_from_environment_id
+        // is called (it is passed None), but an explicit test documents intent.
+        assert_eq!(
+            env_switch_badge_from_environment_id("local"),
+            Some("local".to_string())
+        );
+        // Empty string maps to None regardless.
+        assert_eq!(env_switch_badge_from_environment_id(""), None);
+    }
+
+    #[test]
+    fn docker_prefix_without_name_produces_no_badge() {
+        assert_eq!(env_switch_badge_from_environment_id("docker:"), None);
+    }
+
+    #[test]
+    fn ssh_prefix_without_host_produces_no_badge() {
+        assert_eq!(env_switch_badge_from_environment_id("ssh:"), None);
     }
 }

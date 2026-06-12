@@ -31,6 +31,7 @@ fn thread_settings_for_test(
                 },
             },
             personality: Some(Personality::Pragmatic),
+            active_environment_id: None,
         },
     }
 }
