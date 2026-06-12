@@ -1,4 +1,5 @@
 use codex_exec_server::LOCAL_ENVIRONMENT_ID;
+use codex_exec_server::provision::Hop;
 use codex_exec_server::provision::RemoteLauncher;
 use codex_exec_server::provision::VersionPolicy;
 use codex_exec_server::provision::ensure_remote_codex;
@@ -42,13 +43,23 @@ const RUN_REMOTE_TIMEOUT_SECS: u64 = 20;
 #[derive(Default)]
 pub struct EnvSwitchHandler;
 
+/// A single hop element as supplied by the model in the `hops` array.
+#[derive(Deserialize)]
+struct HopArg {
+    #[serde(rename = "type")]
+    hop_type: String,
+    host: Option<String>,
+    container: Option<String>,
+}
+
 /// Arguments accepted by the `env_switch` tool.
 #[derive(Deserialize)]
 struct EnvSwitchArgs {
-    target: String,
+    target: Option<String>,
     container: Option<String>,
     host: Option<String>,
     cwd: Option<String>,
+    hops: Option<Vec<HopArg>>,
 }
 
 impl ToolExecutor<ToolInvocation> for EnvSwitchHandler {
@@ -109,13 +120,57 @@ async fn run_remote(launcher: &RemoteLauncher, script: &str) -> (bool, String, S
     }
 }
 
+/// Converts a `HopArg` from the model into a [`Hop`], returning an error
+/// message if required fields are missing.
+fn hop_from_arg(arg: HopArg) -> Result<Hop, FunctionCallError> {
+    match arg.hop_type.as_str() {
+        "ssh" => {
+            let host = arg.host.ok_or_else(|| {
+                FunctionCallError::RespondToModel(
+                    "env_switch: each hop of type `ssh` requires a `host` field".to_string(),
+                )
+            })?;
+            Ok(Hop::Ssh { host })
+        }
+        "docker" => {
+            let container = arg.container.ok_or_else(|| {
+                FunctionCallError::RespondToModel(
+                    "env_switch: each hop of type `docker` requires a `container` field"
+                        .to_string(),
+                )
+            })?;
+            Ok(Hop::Docker { container })
+        }
+        other => Err(FunctionCallError::RespondToModel(format!(
+            "env_switch: unknown hop type `{other}`; valid values are `ssh`, `docker`"
+        ))),
+    }
+}
+
 /// Core logic shared between all switch directions.
 async fn handle_env_switch(
     session: &Arc<Session>,
     turn: &Arc<TurnContext>,
     args: EnvSwitchArgs,
 ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
-    match args.target.as_str() {
+    // If `hops` is supplied, build a multi-hop launcher directly.
+    if let Some(hop_args) = args.hops {
+        if hop_args.is_empty() {
+            return Err(FunctionCallError::RespondToModel(
+                "env_switch: `hops` must not be empty when provided".to_string(),
+            ));
+        }
+        let hops: Vec<Hop> = hop_args
+            .into_iter()
+            .map(hop_from_arg)
+            .collect::<Result<_, _>>()?;
+        let launcher = RemoteLauncher::layered(hops);
+        return handle_remote_switch(session, launcher, args.cwd).await;
+    }
+
+    // Fall back to the legacy single-hop `target` parameter.
+    let target = args.target.as_deref().unwrap_or("");
+    match target {
         "local" => handle_local_switch(turn, args.cwd),
         "docker" => {
             let container = args.container.ok_or_else(|| {
@@ -123,7 +178,7 @@ async fn handle_env_switch(
                     "env_switch: `container` is required when target is `docker`".to_string(),
                 )
             })?;
-            handle_remote_switch(session, RemoteLauncher::Docker { container }, args.cwd).await
+            handle_remote_switch(session, RemoteLauncher::docker(container), args.cwd).await
         }
         "ssh" => {
             let host = args.host.ok_or_else(|| {
@@ -131,10 +186,11 @@ async fn handle_env_switch(
                     "env_switch: `host` is required when target is `ssh`".to_string(),
                 )
             })?;
-            handle_remote_switch(session, RemoteLauncher::Ssh { host }, args.cwd).await
+            handle_remote_switch(session, RemoteLauncher::ssh(host), args.cwd).await
         }
         other => Err(FunctionCallError::RespondToModel(format!(
-            "env_switch: unsupported target `{other}`; valid values are `local`, `docker`, `ssh`"
+            "env_switch: unsupported target `{other}`; valid values are `local`, `docker`, `ssh`, \
+             or provide a `hops` array for multi-hop routing"
         ))),
     }
 }
@@ -200,42 +256,20 @@ async fn handle_remote_switch(
     };
 
     // --- Step 3: build the environment id and register the stdio environment ----
-    let (environment_id, target_label) = match &launcher {
-        RemoteLauncher::Docker { container } => (
-            format!("docker:{container}"),
-            format!("docker container `{container}`"),
-        ),
-        RemoteLauncher::Ssh { host } => (format!("ssh:{host}"), format!("ssh host `{host}`")),
-    };
+    let environment_id = launcher.id();
+    let target_label = environment_id.clone();
 
-    let exec_argv: Vec<String> = match &launcher {
-        RemoteLauncher::Docker { container } => vec![
-            "docker".to_string(),
-            "exec".to_string(),
-            "-i".to_string(),
-            container.clone(),
-            codex_path.clone(),
-            "exec-server".to_string(),
-            "--listen".to_string(),
-            "stdio".to_string(),
-            "-c".to_string(),
-            "sandbox_mode=danger-full-access".to_string(),
-            "-c".to_string(),
-            "approval_policy=never".to_string(),
-        ],
-        RemoteLauncher::Ssh { host } => {
-            let remote_cmd = format!(
-                "{} exec-server --listen stdio -c sandbox_mode=danger-full-access -c approval_policy=never",
-                posix_single_quote(&codex_path),
-            );
-            vec![
-                "ssh".to_string(),
-                "-T".to_string(),
-                host.clone(),
-                remote_cmd,
-            ]
-        }
-    };
+    let exec_server_inner = vec![
+        codex_path.clone(),
+        "exec-server".to_string(),
+        "--listen".to_string(),
+        "stdio".to_string(),
+        "-c".to_string(),
+        "sandbox_mode=danger-full-access".to_string(),
+        "-c".to_string(),
+        "approval_policy=never".to_string(),
+    ];
+    let exec_argv = launcher.exec_argv(exec_server_inner);
     let (program, args) = exec_argv
         .split_first()
         .map(|(p, rest)| (p.clone(), rest.to_vec()))
