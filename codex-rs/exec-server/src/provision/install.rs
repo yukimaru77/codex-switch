@@ -2,17 +2,30 @@
 
 use std::fmt::Write;
 use std::process::Stdio;
+use std::time::Duration;
 
+use codex_client::build_reqwest_client_with_custom_ca;
 use sha2::Digest;
 use sha2::Sha256;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use tokio::time::timeout;
 
 use crate::provision::ProvisionError;
 use crate::provision::RemoteLauncher;
 use crate::provision::VersionPolicy;
+use crate::provision::launcher::posix_single_quote;
 use crate::provision::probe::probe;
 use crate::provision::triple::resolve_triple;
+
+/// Timeout for the version-verification command (short – same as probe).
+const VERIFY_TIMEOUT_SECS: u64 = 20;
+
+/// Timeout for the full download + remote extraction pipeline.
+///
+/// The archive download can be large (tens of MB) and the remote `tar`
+/// invocation adds time on top; 300 s is generous but bounded.
+const INSTALL_TIMEOUT_SECS: u64 = 300;
 
 /// The result of a successful provisioning operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,12 +50,16 @@ const RELEASES_BASE: &str = "https://github.com/openai/codex/releases/download";
 ///
 /// # Steps
 /// 1. Probe the remote to find OS/arch and any existing binary.
-/// 2. If the existing version matches `desired`, return it immediately.
-/// 3. Otherwise, download `codex-package-<triple>.tar.gz` and
+/// 2. If the existing binary already satisfies `desired` *without* a network
+///    round-trip, reuse it immediately (avoids the GitHub API, which matters
+///    under rate limiting).
+/// 3. Otherwise resolve the concrete target version (may hit the GitHub API),
+///    and reuse again if it now matches.
+/// 4. Otherwise download `codex-package-<triple>.tar.gz` and
 ///    `codex-package_SHA256SUMS` on the **host**, verify the SHA-256, then
 ///    stream the archive into the remote via the launcher's stdin.
-/// 4. Verify the installed binary reports the expected version.
-/// 5. On download failure, fall back to the existing binary (if any) with a
+/// 5. Verify the installed binary reports the expected version.
+/// 6. On download failure, fall back to the existing binary (if any) with a
 ///    warning.
 pub async fn ensure_remote_codex(
     launcher: &RemoteLauncher,
@@ -50,9 +67,24 @@ pub async fn ensure_remote_codex(
 ) -> Result<ProvisionedCodex, ProvisionError> {
     let probe_result = probe(launcher).await?;
     let triple = resolve_triple(&probe_result.os, &probe_result.arch)?;
+
+    // Fast path: reuse an existing remote binary when the policy can be
+    // satisfied offline, so a routine switch to an already-provisioned remote
+    // never touches the network.
+    if let Some((existing_path, existing_version)) = &probe_result.existing
+        && desired.is_satisfied_by_existing(existing_version)
+    {
+        return Ok(ProvisionedCodex {
+            codex_path: existing_path.clone(),
+            version: existing_version.clone(),
+            warning: None,
+        });
+    }
+
+    // A download may be required: resolve the concrete version now.
     let version = desired.resolve().await?;
 
-    // If the desired version is already present, reuse it.
+    // The resolved version may still match what is already installed.
     if let Some((existing_path, existing_version)) = &probe_result.existing
         && *existing_version == version
     {
@@ -101,7 +133,28 @@ pub async fn ensure_remote_codex(
 
 /// Downloads the package archive and SHA256SUMS on the host, verifies the
 /// digest, then streams the archive into the remote via stdin.
+///
+/// The entire operation (download + remote extraction) is bounded by
+/// [`INSTALL_TIMEOUT_SECS`].
 async fn install_remote_codex(
+    launcher: &RemoteLauncher,
+    triple: &str,
+    version: &str,
+    remote_home: &str,
+) -> Result<(), ProvisionError> {
+    timeout(
+        Duration::from_secs(INSTALL_TIMEOUT_SECS),
+        install_remote_codex_inner(launcher, triple, version, remote_home),
+    )
+    .await
+    .map_err(|_| ProvisionError::Timeout {
+        secs: INSTALL_TIMEOUT_SECS,
+        context: "install (download + remote extraction)".to_string(),
+    })?
+}
+
+/// Inner (non-timeout-wrapped) implementation of the install step.
+async fn install_remote_codex_inner(
     launcher: &RemoteLauncher,
     triple: &str,
     version: &str,
@@ -111,9 +164,11 @@ async fn install_remote_codex(
     let archive_url = format!("{RELEASES_BASE}/rust-v{version}/{asset_name}");
     let sums_url = format!("{RELEASES_BASE}/rust-v{version}/codex-package_SHA256SUMS");
 
-    let client = reqwest::Client::builder()
-        .user_agent("codex-exec-server")
-        .build()?;
+    // Use the shared workspace HTTP client so CODEX_CA_CERTIFICATE and
+    // proxy settings are inherited automatically.
+    let client = build_reqwest_client_with_custom_ca(
+        reqwest::Client::builder().user_agent("codex-exec-server"),
+    )?;
 
     // Download SHA256SUMS first.
     let sums_bytes = client
@@ -151,13 +206,21 @@ async fn install_remote_codex(
     // The codex-package tar.gz layout (from install.sh) places the binary at
     // `bin/codex` relative to the archive root.  We extract into a versioned
     // directory and create a stable symlink.
+    //
+    // All values interpolated into the shell script are wrapped with
+    // `posix_single_quote` to prevent injection via paths containing shell
+    // metacharacters (spaces, quotes, dollar signs, etc.).
     let release_dir = format!("{remote_home}/.codex/bin/releases/{version}");
     let install_sh = format!(
-        "mkdir -p '{release_dir}' && \
-         tar -xzf - -C '{release_dir}' && \
-         chmod 0755 '{release_dir}/bin/codex' && \
-         mkdir -p '{remote_home}/.codex/bin' && \
-         ln -sf '{release_dir}/bin/codex' '{remote_home}/.codex/bin/codex'"
+        "mkdir -p {release_dir_q} && \
+         tar -xzf - -C {release_dir_q} && \
+         chmod 0755 {codex_bin_q} && \
+         mkdir -p {bin_dir_q} && \
+         ln -sf {codex_bin_q} {symlink_q}",
+        release_dir_q = posix_single_quote(&release_dir),
+        codex_bin_q = posix_single_quote(&format!("{release_dir}/bin/codex")),
+        bin_dir_q = posix_single_quote(&format!("{remote_home}/.codex/bin")),
+        symlink_q = posix_single_quote(&format!("{remote_home}/.codex/bin/codex")),
     );
 
     let argv = launcher.shell_argv(&install_sh);
@@ -202,11 +265,16 @@ async fn install_remote_codex(
 
 /// Runs `<codex_path> --version` via the launcher and parses the version
 /// string from the output.
+///
+/// The path is wrapped with [`posix_single_quote`] before embedding it in the
+/// shell script so paths containing spaces or shell metacharacters cannot cause
+/// injection.  A [`VERIFY_TIMEOUT_SECS`]-second timeout prevents a hung
+/// remote from blocking indefinitely.
 async fn verify_remote_version(
     launcher: &RemoteLauncher,
     codex_path: &str,
 ) -> Result<String, ProvisionError> {
-    let version_cmd = format!("{codex_path} --version");
+    let version_cmd = format!("{} --version", posix_single_quote(codex_path));
     let argv = launcher.shell_argv(&version_cmd);
     let (program, prefix_args) = argv
         .split_first()
@@ -218,7 +286,14 @@ async fn verify_remote_version(
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
-    let output = cmd.output().await.map_err(ProvisionError::LauncherIo)?;
+    let output = timeout(Duration::from_secs(VERIFY_TIMEOUT_SECS), cmd.output())
+        .await
+        .map_err(|_| ProvisionError::Timeout {
+            secs: VERIFY_TIMEOUT_SECS,
+            context: format!("verify {codex_path} --version"),
+        })?
+        .map_err(ProvisionError::LauncherIo)?;
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         return Err(ProvisionError::LauncherNonZero {

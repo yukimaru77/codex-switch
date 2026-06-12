@@ -243,6 +243,10 @@ pub struct TurnContext {
     pub(crate) model_verification_emitted: AtomicBool,
     /// Effective cyber treatment for this turn, including any child-agent inheritance.
     pub(crate) cyber_access_program: Option<CyberAccessProgram>,
+    /// Set to `true` the first time `schedule_continuation` fires for this
+    /// turn.  A second `env_switch` call within the same turn observes the
+    /// flag and skips re-scheduling, preventing a double continuation/interrupt.
+    pub(crate) continuation_scheduled: AtomicBool,
 }
 
 enum TurnMultiAgentRuntime {
@@ -550,6 +554,35 @@ impl TurnContext {
                 self.model_verification_emitted.load(Ordering::Relaxed),
             ),
             cyber_access_program: self.cyber_access_program,
+            continuation_scheduled: AtomicBool::new(
+                self.continuation_scheduled.load(Ordering::Relaxed),
+            ),
+        }
+    }
+
+    pub(crate) fn file_system_sandbox_context(
+        &self,
+        additional_permissions: Option<AdditionalPermissionProfile>,
+        environment: &TurnEnvironment,
+    ) -> FileSystemSandboxContext {
+        let permissions = effective_permission_profile(
+            environment.permission_profile(),
+            additional_permissions.as_ref(),
+        );
+        FileSystemSandboxContext {
+            permissions: permissions.into(),
+            cwd: Some(environment.cwd().clone()),
+            workspace_roots: environment.workspace_roots().to_vec(),
+            windows_sandbox_level: executor_windows_sandbox_level(
+                self.windows_sandbox_level,
+                environment.cwd(),
+            ),
+            windows_sandbox_private_desktop: self
+                .config
+                .permissions
+                .windows_sandbox_private_desktop,
+            windows_sandbox_proxy_settings_mode: None,
+            use_legacy_landlock: self.config.features.use_legacy_landlock(),
         }
     }
 
@@ -817,6 +850,7 @@ impl Session {
             server_model_warning_emitted: AtomicBool::new(false),
             model_verification_emitted: AtomicBool::new(false),
             cyber_access_program: None,
+            continuation_scheduled: AtomicBool::new(false),
         }
     }
 
