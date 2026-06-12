@@ -300,6 +300,111 @@ fn ssh_docker_shell_argv_script_with_metacharacters() {
     );
 }
 
+// --- from_id (round-trip) ------------------------------------------------
+
+#[test]
+fn from_id_roundtrip_single_docker() {
+    let original = RemoteLauncher::docker("my-container");
+    let parsed = RemoteLauncher::from_id(&original.id()).expect("parse failed");
+    assert_eq!(parsed, original);
+}
+
+#[test]
+fn from_id_roundtrip_single_ssh() {
+    let original = RemoteLauncher::ssh("user@host");
+    let parsed = RemoteLauncher::from_id(&original.id()).expect("parse failed");
+    assert_eq!(parsed, original);
+}
+
+#[test]
+fn from_id_roundtrip_ssh_then_docker() {
+    let original = RemoteLauncher::layered(vec![
+        Hop::Ssh {
+            host: "dgx".to_string(),
+        },
+        Hop::Docker {
+            container: "c".to_string(),
+        },
+    ]);
+    let parsed = RemoteLauncher::from_id(&original.id()).expect("parse failed");
+    assert_eq!(parsed, original);
+    assert_eq!(parsed.id(), "ssh:dgx>docker:c");
+}
+
+#[test]
+fn from_id_roundtrip_three_hops() {
+    let original = RemoteLauncher::layered(vec![
+        Hop::Ssh {
+            host: "bastion".to_string(),
+        },
+        Hop::Ssh {
+            host: "dgx".to_string(),
+        },
+        Hop::Docker {
+            container: "c".to_string(),
+        },
+    ]);
+    let parsed = RemoteLauncher::from_id(&original.id()).expect("parse failed");
+    assert_eq!(parsed, original);
+    assert_eq!(parsed.id(), "ssh:bastion>ssh:dgx>docker:c");
+}
+
+#[test]
+fn from_id_error_empty_string() {
+    let result = RemoteLauncher::from_id("");
+    assert!(result.is_err(), "expected error for empty id");
+}
+
+#[test]
+fn from_id_error_unknown_type() {
+    let result = RemoteLauncher::from_id("ftp:somehost");
+    assert!(
+        result.is_err(),
+        "expected error for unknown type, got: {result:?}"
+    );
+}
+
+#[test]
+fn from_id_error_missing_colon() {
+    let result = RemoteLauncher::from_id("sshdgx");
+    assert!(
+        result.is_err(),
+        "expected error for missing colon separator, got: {result:?}"
+    );
+}
+
+#[test]
+fn from_id_error_empty_value() {
+    let result = RemoteLauncher::from_id("ssh:");
+    assert!(
+        result.is_err(),
+        "expected error for empty value after colon, got: {result:?}"
+    );
+}
+
+// --- with_appended_hop ---------------------------------------------------
+
+#[test]
+fn with_appended_hop_adds_inner_layer() {
+    let base = RemoteLauncher::ssh("dgx");
+    let extended = base.with_appended_hop(Hop::Docker {
+        container: "c".to_string(),
+    });
+    assert_eq!(extended.id(), "ssh:dgx>docker:c");
+    assert_eq!(extended.hops.len(), 2);
+}
+
+#[test]
+fn with_appended_hop_does_not_mutate_base() {
+    let base = RemoteLauncher::ssh("dgx");
+    let _extended = base.with_appended_hop(Hop::Docker {
+        container: "c".to_string(),
+    });
+    // base is unchanged
+    assert_eq!(base.id(), "ssh:dgx");
+    assert_eq!(base.hops.len(), 1);
+}
+
 // --- 3-hop: ssh→ssh→docker ---------------------------------------------
 
 #[test]
