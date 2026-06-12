@@ -60,6 +60,13 @@ struct EnvSwitchArgs {
     host: Option<String>,
     cwd: Option<String>,
     hops: Option<Vec<HopArg>>,
+    /// Relative mode: environment_id of the existing environment to build upon.
+    /// When absent together with `extend`, the thread's most-recently-activated
+    /// remote environment is used as the base.
+    base: Option<String>,
+    /// Relative mode: a single hop to append to the base environment.
+    /// When present, `hops` / `target` / `container` / `host` are ignored.
+    extend: Option<HopArg>,
 }
 
 impl ToolExecutor<ToolInvocation> for EnvSwitchHandler {
@@ -153,7 +160,36 @@ async fn handle_env_switch(
     turn: &Arc<TurnContext>,
     args: EnvSwitchArgs,
 ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
-    // If `hops` is supplied, build a multi-hop launcher directly.
+    // --- Priority 1: relative mode (extend is present) -----------------------
+    if let Some(extend_arg) = args.extend {
+        let extend_hop = hop_from_arg(extend_arg)?;
+
+        // Determine the base launcher.
+        let base_launcher: RemoteLauncher = if let Some(base_id) = args.base {
+            // Explicit base: restore from id string.
+            RemoteLauncher::from_id(&base_id).map_err(|e| {
+                FunctionCallError::RespondToModel(format!(
+                    "env_switch: invalid `base` environment id `{base_id}`: {e}"
+                ))
+            })?
+        } else {
+            // Implicit base: use the thread's most-recently-activated launcher.
+            let cursors = session.services.last_remote_launcher.lock().await;
+            cursors.get(&session.thread_id).cloned().ok_or_else(|| {
+                FunctionCallError::RespondToModel(
+                    "env_switch: relative mode requires a `base` or a previously-activated \
+                         remote environment on this thread, but none was found. \
+                         Provide an explicit `base` environment_id."
+                        .to_string(),
+                )
+            })?
+        };
+
+        let new_launcher = base_launcher.with_appended_hop(extend_hop);
+        return handle_remote_switch(session, new_launcher, args.cwd).await;
+    }
+
+    // --- Priority 2: absolute multi-hop (hops array) -------------------------
     if let Some(hop_args) = args.hops {
         if hop_args.is_empty() {
             return Err(FunctionCallError::RespondToModel(
@@ -168,7 +204,7 @@ async fn handle_env_switch(
         return handle_remote_switch(session, launcher, args.cwd).await;
     }
 
-    // Fall back to the legacy single-hop `target` parameter.
+    // --- Priority 3: legacy single-hop `target` parameter -------------------
     let target = args.target.as_deref().unwrap_or("");
     match target {
         "local" => handle_local_switch(turn, args.cwd),
@@ -190,7 +226,8 @@ async fn handle_env_switch(
         }
         other => Err(FunctionCallError::RespondToModel(format!(
             "env_switch: unsupported target `{other}`; valid values are `local`, `docker`, `ssh`, \
-             or provide a `hops` array for multi-hop routing"
+             or provide a `hops` array for multi-hop routing, \
+             or provide an `extend` object for relative mode"
         ))),
     }
 }
@@ -302,6 +339,12 @@ async fn handle_remote_switch(
     {
         let mut cwds = session.services.dynamic_environment_cwds.lock().await;
         cwds.insert(environment_id.clone(), abs_cwd);
+    }
+
+    // --- Step 4b: update per-thread last-launcher cursor (relative mode base) ---
+    {
+        let mut cursors = session.services.last_remote_launcher.lock().await;
+        cursors.insert(session.thread_id, launcher.clone());
     }
 
     // --- Step 5: emit a ThreadSettingsApplied badge event (non-sticky) -----------
