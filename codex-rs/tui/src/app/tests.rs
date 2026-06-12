@@ -6041,6 +6041,7 @@ async fn inactive_thread_settings_notification_updates_cached_collaboration_mode
             collaboration_mode: collaboration_mode.clone(),
             multi_agent_mode: Default::default(),
             personality: Some(Personality::Pragmatic),
+            active_environment_id: None,
         },
     };
     app.enqueue_thread_notification(
