@@ -5393,6 +5393,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         turn_environments: Arc::clone(&turn_environments),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         dynamic_environment_cwds: Mutex::new(HashMap::new()),
+        last_remote_launcher: Mutex::new(HashMap::new()),
     };
 
     let plugins_input = per_turn_config.plugins_config_input();
@@ -7553,6 +7554,7 @@ where
         turn_environments: Arc::clone(&turn_environments),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         dynamic_environment_cwds: Mutex::new(HashMap::new()),
+        last_remote_launcher: Mutex::new(HashMap::new()),
     };
 
     let plugins_input = per_turn_config.plugins_config_input();
