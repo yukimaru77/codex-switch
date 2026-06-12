@@ -59,6 +59,10 @@ struct RunExecLikeArgs {
     tracker: crate::tools::context::SharedTurnDiffTracker,
     call_id: String,
     shell_runtime_backend: ShellRuntimeBackend,
+    /// When `Some`, use this environment instead of `turn.environments.primary()`.
+    /// Populated by callers that parsed an `environment_id` argument and
+    /// resolved it via [`resolve_tool_environment`].
+    resolved_environment: Option<crate::session::turn_context::TurnEnvironment>,
 }
 
 async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, FunctionCallError> {
@@ -76,9 +80,21 @@ async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, Func
         tracker,
         call_id,
         shell_runtime_backend,
+        resolved_environment,
     } = args;
     let turn = Arc::clone(&step_context.turn);
 
+    let turn_environment = match resolved_environment {
+        Some(env) => env,
+        None => {
+            let Some(primary) = turn.environments.primary() else {
+                return Err(FunctionCallError::RespondToModel(
+                    "shell is unavailable in this session".to_string(),
+                ));
+            };
+            primary.clone()
+        }
+    };
     let fs = turn_environment.environment.get_filesystem();
 
     let mut explicit_env_overrides = turn
