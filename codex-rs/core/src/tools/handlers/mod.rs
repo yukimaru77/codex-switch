@@ -157,25 +157,61 @@ fn resolve_workdir_base_path(
         .map_or_else(|| default_cwd.clone(), |workdir| default_cwd.join(workdir)))
 }
 
-fn resolve_tool_environment<'a>(
-    environments: &'a TurnEnvironmentSnapshot,
+/// Resolve the environment to use for a tool call.
+///
+/// Resolution order:
+/// 1. `environment_id` is `None` → return the primary turn environment (borrowed from `turn`).
+/// 2. `environment_id` is `Some(id)` and `id` is in `turn.environments.turn_environments` →
+///    clone and return it (same as before).
+/// 3. `environment_id` is `Some(id)`, not in `turn` but present in the live
+///    `EnvironmentManager` → synthesize a `TurnEnvironment` using the cwd recorded in
+///    `session.services.dynamic_environment_cwds` (or fall back to the primary cwd / "/").
+/// 4. Otherwise → "unknown turn environment id" error.
+///
+/// The function now returns an owned `TurnEnvironment` rather than a borrow because synthesized
+/// values in case 3 have no backing storage in `turn`.
+pub(crate) async fn resolve_tool_environment(
+    session: &Session,
+    turn: &TurnContext,
     environment_id: Option<&str>,
-) -> Result<Option<&'a TurnEnvironment>, FunctionCallError> {
-    environment_id.map_or_else(
-        || Ok(environments.primary()),
-        |environment_id| {
-            environments
-                .turn_environments
-                .iter()
-                .find(|environment| environment.environment_id == environment_id)
-                .map(Some)
-                .ok_or_else(|| {
-                    FunctionCallError::RespondToModel(format!(
-                        "unknown turn environment id `{environment_id}`"
-                    ))
-                })
-        },
-    )
+) -> Result<Option<TurnEnvironment>, FunctionCallError> {
+    let Some(env_id) = environment_id else {
+        return Ok(turn.environments.primary().cloned());
+    };
+
+    // Fast path: id already in the frozen turn list.
+    if let Some(found) = turn
+        .environments
+        .turn_environments
+        .iter()
+        .find(|e| e.environment_id == env_id)
+    {
+        return Ok(Some(found.clone()));
+    }
+
+    // Live fallback: look up through EnvironmentManager (for dynamically
+    // registered environments, e.g. registered by env_switch in the same turn).
+    if let Some(environment) = session.services.environment_manager.get_environment(env_id) {
+        let cwd = {
+            let cwds = session.services.dynamic_environment_cwds.lock().await;
+            cwds.get(env_id).cloned()
+        }
+        .or_else(|| turn.environments.primary().map(|p| p.cwd.clone()))
+        .unwrap_or_else(|| {
+            AbsolutePathBuf::from_absolute_path(std::path::Path::new("/"))
+                .expect("/ is always absolute")
+        });
+        return Ok(Some(TurnEnvironment {
+            environment_id: env_id.to_string(),
+            environment,
+            cwd,
+            shell: None,
+        }));
+    }
+
+    Err(FunctionCallError::RespondToModel(format!(
+        "unknown turn environment id `{env_id}`"
+    )))
 }
 
 /// Validates feature/policy constraints for `with_additional_permissions` and
