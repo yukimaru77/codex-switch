@@ -1,3 +1,4 @@
+use codex_exec_server::provision::Hop;
 use codex_exec_server::provision::RemoteLauncher;
 use codex_exec_server::provision::posix_single_quote;
 use codex_tools::ToolSpec;
@@ -62,7 +63,15 @@ fn spec_has_all_expected_properties() {
         panic!("expected ToolSpec::Function");
     };
     let properties = tool.parameters.properties.unwrap_or_default();
-    for expected_key in ["target", "container", "host", "cwd", "hops"] {
+    for expected_key in [
+        "target",
+        "container",
+        "host",
+        "cwd",
+        "hops",
+        "base",
+        "extend",
+    ] {
         assert!(
             properties.contains_key(expected_key),
             "missing property `{expected_key}` in spec, found: {properties:?}"
@@ -193,4 +202,72 @@ fn mkdir_script_quotes_caller_supplied_cwd() {
         remainder, "mkdir -p ",
         "no bare metacharacters after removing quoted arg; got: {remainder:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Relative mode: pure launcher-level logic (no network / docker required)
+// ---------------------------------------------------------------------------
+
+/// Relative mode: base="ssh:dgx" + extend=docker:c → id "ssh:dgx>docker:c"
+#[test]
+fn relative_mode_base_plus_extend_produces_correct_hops() {
+    let base = RemoteLauncher::from_id("ssh:dgx").expect("parse base");
+    let extended = base.with_appended_hop(Hop::Docker {
+        container: "c".to_string(),
+    });
+    assert_eq!(extended.id(), "ssh:dgx>docker:c");
+    assert_eq!(extended.hops.len(), 2);
+    assert_eq!(
+        extended.hops[0],
+        Hop::Ssh {
+            host: "dgx".to_string()
+        }
+    );
+    assert_eq!(
+        extended.hops[1],
+        Hop::Docker {
+            container: "c".to_string()
+        }
+    );
+}
+
+/// Relative mode starting from a two-hop base appends a third hop correctly.
+#[test]
+fn relative_mode_three_hop_chain() {
+    let base = RemoteLauncher::from_id("ssh:bastion>ssh:dgx").expect("parse base");
+    let extended = base.with_appended_hop(Hop::Docker {
+        container: "ml-box".to_string(),
+    });
+    assert_eq!(extended.id(), "ssh:bastion>ssh:dgx>docker:ml-box");
+    assert_eq!(extended.hops.len(), 3);
+}
+
+/// from_id followed by with_appended_hop round-trips correctly.
+#[test]
+fn relative_mode_roundtrip_id() {
+    let original_id = "ssh:user@host>docker:container-1";
+    let base = RemoteLauncher::from_id(original_id).expect("parse base");
+    // The parsed launcher's id must equal the original.
+    assert_eq!(base.id(), original_id);
+    // After appending an ssh hop the id grows as expected.
+    let extended = base.with_appended_hop(Hop::Ssh {
+        host: "inner".to_string(),
+    });
+    assert_eq!(extended.id(), "ssh:user@host>docker:container-1>ssh:inner");
+}
+
+/// Spec: base and extend fields are present and not in the required list.
+#[test]
+fn spec_base_and_extend_are_optional() {
+    let spec = create_env_switch_tool();
+    let ToolSpec::Function(tool) = spec else {
+        panic!("expected ToolSpec::Function");
+    };
+    let required = tool.parameters.required.unwrap_or_default();
+    for optional in ["base", "extend"] {
+        assert!(
+            !required.contains(&optional.to_string()),
+            "`{optional}` should be optional but was found in required: {required:?}"
+        );
+    }
 }
