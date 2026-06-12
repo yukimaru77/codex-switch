@@ -14,32 +14,6 @@ pub enum RemoteLauncher {
 }
 
 impl RemoteLauncher {
-    /// Returns the argv prefix that, when prepended to a command, causes it to
-    /// run inside the target environment.
-    ///
-    /// For Docker: `["docker", "exec", "-i", "<container>"]`.
-    /// For SSH:    `["ssh", "-T", "<host>"]`.
-    ///
-    /// # Warning
-    ///
-    /// Do **not** use this method to build `sh -c <script>` invocations.  SSH
-    /// joins all trailing arguments with spaces and feeds the result to the
-    /// remote login shell, so a multi-word script passed as separate argv
-    /// elements will be re-parsed and break.  Use [`shell_argv`] instead.
-    pub fn argv_prefix(&self) -> Vec<String> {
-        match self {
-            RemoteLauncher::Docker { container } => vec![
-                "docker".to_string(),
-                "exec".to_string(),
-                "-i".to_string(),
-                container.clone(),
-            ],
-            RemoteLauncher::Ssh { host } => {
-                vec!["ssh".to_string(), "-T".to_string(), host.clone()]
-            }
-        }
-    }
-
     /// Builds an argv that runs `sh -c <script>` safely inside the target
     /// environment, regardless of transport.
     ///
