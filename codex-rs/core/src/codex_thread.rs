@@ -6,6 +6,8 @@ use crate::session::SessionSettingsUpdate;
 use crate::session::session::Session;
 use codex_diagnostics::Gauge;
 use codex_diagnostics::GaugeGuard;
+use crate::user_message_admission::UserMessageAdmission;
+use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_exec_server::SelectedCapabilityRootsStatus;
 use codex_extension_api::ThreadIdleCause;
 use codex_features::Feature;
@@ -111,6 +113,11 @@ impl ThreadConfigSnapshot {
 
     pub fn into_thread_settings_snapshot(self) -> ThreadSettingsSnapshot {
         let cwd = self.cwd().clone();
+        let active_environment_id = self
+            .environment_selections()
+            .first()
+            .map(|selection| selection.environment_id.clone())
+            .filter(|environment_id| environment_id != LOCAL_ENVIRONMENT_ID);
         ThreadSettingsSnapshot {
             model: self.model,
             model_provider_id: self.model_provider_id,
@@ -120,6 +127,7 @@ impl ThreadConfigSnapshot {
             permission_profile: self.permission_profile,
             active_permission_profile: self.active_permission_profile,
             cwd,
+            active_environment_id,
             reasoning_effort: self.reasoning_effort,
             reasoning_summary: self.reasoning_summary,
             personality: self.personality,
