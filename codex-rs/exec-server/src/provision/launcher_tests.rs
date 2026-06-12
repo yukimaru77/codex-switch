@@ -3,25 +3,6 @@ use pretty_assertions::assert_eq;
 use super::RemoteLauncher;
 use super::posix_single_quote;
 
-#[test]
-fn docker_argv_prefix() {
-    let launcher = RemoteLauncher::Docker {
-        container: "my-container".to_string(),
-    };
-    assert_eq!(
-        launcher.argv_prefix(),
-        vec!["docker", "exec", "-i", "my-container"]
-    );
-}
-
-#[test]
-fn ssh_argv_prefix() {
-    let launcher = RemoteLauncher::Ssh {
-        host: "user@host".to_string(),
-    };
-    assert_eq!(launcher.argv_prefix(), vec!["ssh", "-T", "user@host"]);
-}
-
 // --- posix_single_quote --------------------------------------------------
 
 #[test]

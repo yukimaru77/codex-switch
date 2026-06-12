@@ -1,4 +1,5 @@
 use codex_exec_server::provision::RemoteLauncher;
+use codex_exec_server::provision::posix_single_quote;
 use codex_tools::ToolSpec;
 
 use crate::tools::handlers::env_switch_spec::ENV_SWITCH_TOOL_NAME;
@@ -70,24 +71,130 @@ fn spec_has_all_expected_properties() {
 }
 
 // ---------------------------------------------------------------------------
-// RemoteLauncher argv prefix tests (exec-server provision crate)
+// RemoteLauncher shell_argv tests (replaces deprecated argv_prefix)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn docker_launcher_argv_prefix() {
+fn docker_launcher_shell_argv_structure() {
     let launcher = RemoteLauncher::Docker {
         container: "my-container".to_string(),
     };
+    let argv = launcher.shell_argv("echo hello");
+    // Docker: ["docker", "exec", "-i", "<container>", "sh", "-c", "<script>"]
+    assert_eq!(argv[0], "docker");
+    assert_eq!(argv[1], "exec");
+    assert_eq!(argv[2], "-i");
+    assert_eq!(argv[3], "my-container");
+    assert_eq!(argv[4], "sh");
+    assert_eq!(argv[5], "-c");
+    assert_eq!(argv[6], "echo hello");
+}
+
+#[test]
+fn ssh_launcher_shell_argv_structure() {
+    let launcher = RemoteLauncher::Ssh {
+        host: "user@remote".to_string(),
+    };
+    let argv = launcher.shell_argv("echo hello");
+    // SSH: ["ssh", "-T", "<host>", "sh -c '<quoted_script>'"]
+    assert_eq!(argv[0], "ssh");
+    assert_eq!(argv[1], "-T");
+    assert_eq!(argv[2], "user@remote");
+    // The fourth element contains the quoted shell invocation.
+    assert!(
+        argv[3].starts_with("sh -c '"),
+        "expected ssh argv[3] to start with `sh -c '`, got: {:?}",
+        argv[3]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// cwd injection / shell quoting tests (#1)
+// ---------------------------------------------------------------------------
+
+/// Verifies that a cwd containing shell metacharacters is wrapped in POSIX
+/// single-quotes so it cannot be interpreted as a shell command.
+///
+/// The key property: the metacharacters appear only inside single-quote
+/// delimiters and never as bare tokens that a shell would interpret.
+#[test]
+fn posix_single_quote_neutralises_metacharacters() {
+    // If the cwd contains `; touch /tmp/pwned`, the raw string would inject a
+    // second shell command.  posix_single_quote must wrap it so the semicolon
+    // is neutralised.
+    let evil_cwd = "/tmp/test; touch /tmp/pwned";
+    let quoted = posix_single_quote(evil_cwd);
+    assert_eq!(quoted, "'/tmp/test; touch /tmp/pwned'");
+
+    // The resulting mkdir -p script must contain the fully-quoted form.
+    let script = format!("mkdir -p {}", posix_single_quote(evil_cwd));
+    assert_eq!(script, "mkdir -p '/tmp/test; touch /tmp/pwned'");
+
+    // The dangerous sequence must NOT appear as bare (unquoted) tokens.
+    // We verify this by checking that there is no `'; ...'` token split that
+    // would allow the shell to interpret `;` as a command separator.
+    // Specifically, the string outside all single-quoted segments must not
+    // contain `;`.
+    //
+    // We check this by stripping the expected quoted argument and verifying
+    // what remains is only `mkdir -p ` (no bare metacharacters).
+    let remainder = script.replace("'/tmp/test; touch /tmp/pwned'", "");
     assert_eq!(
-        launcher.argv_prefix(),
-        vec!["docker", "exec", "-i", "my-container"]
+        remainder, "mkdir -p ",
+        "nothing should remain after removing the quoted arg, got: {remainder:?}"
     );
 }
 
 #[test]
-fn ssh_launcher_argv_prefix() {
-    let launcher = RemoteLauncher::Ssh {
-        host: "user@remote".to_string(),
-    };
-    assert_eq!(launcher.argv_prefix(), vec!["ssh", "-T", "user@remote"]);
+fn posix_single_quote_neutralises_dollar_expansion() {
+    let cwd = "/home/$(id -u)/.secret";
+    let quoted = posix_single_quote(cwd);
+    // Must be wrapped in single quotes so $(...) is not expanded.
+    assert!(quoted.starts_with('\''), "must start with single quote");
+    assert!(quoted.ends_with('\''), "must end with single quote");
+    // The dollar sign and parentheses are present literally, not as a command.
+    assert!(
+        quoted.contains("$(id -u)"),
+        "literal content must be preserved"
+    );
+}
+
+#[test]
+fn posix_single_quote_handles_embedded_single_quote() {
+    // A cwd like "/root/it's" must be escaped as '/root/it'\''s'.
+    let cwd = "/root/it's";
+    let quoted = posix_single_quote(cwd);
+    assert_eq!(quoted, r"'/root/it'\''s'");
+}
+
+#[test]
+fn posix_single_quote_handles_spaces() {
+    let cwd = "/my dir/with spaces";
+    let quoted = posix_single_quote(cwd);
+    assert_eq!(quoted, "'/my dir/with spaces'");
+
+    let script = format!("mkdir -p {}", quoted);
+    // The spaces appear only inside the quotes; the raw unquoted form would
+    // be "/my" followed by "dir/with" as separate tokens.
+    assert_eq!(script, "mkdir -p '/my dir/with spaces'");
+}
+
+/// When the script that probes/creates $HOME is built, it must not embed
+/// the literal cwd string unquoted when a caller-supplied cwd is used.
+#[test]
+fn mkdir_script_quotes_caller_supplied_cwd() {
+    // Simulate what handle_remote_switch does when explicit_cwd is Some.
+    let evil_cwd = "/workspace/project;rm -rf /";
+    let script = format!("mkdir -p {}", posix_single_quote(evil_cwd));
+    // The complete script must equal the expected quoted form exactly.
+    assert_eq!(
+        script, "mkdir -p '/workspace/project;rm -rf /'",
+        "expected exactly the quoted script"
+    );
+    // Strip the quoted argument; nothing dangerous should be left bare.
+    let remainder = script.replace("'/workspace/project;rm -rf /'", "");
+    assert_eq!(
+        remainder, "mkdir -p ",
+        "no bare metacharacters after removing quoted arg; got: {remainder:?}"
+    );
 }
