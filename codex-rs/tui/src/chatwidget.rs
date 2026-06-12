@@ -548,6 +548,19 @@ pub(crate) struct ChatWidget {
     /// environment has been switched via `env_switch`.  `None` means the thread
     /// is running locally and no badge is displayed.
     /// Example values: `"🐳 env-remote-test"`, `"🔗 dgx"`.
+    ///
+    /// # Derived-state rationale
+    ///
+    /// This field is a pre-formatted derivative of `ThreadSettings::active_environment_id`.
+    /// It is cached here as a `String` rather than recomputed at every render frame because
+    /// `status_line_value_for_item` is `&mut self` (not a pure render path) and the badge
+    /// conversion is cheap but string-allocating.
+    ///
+    /// **Single sync point**: this field MUST only be written in
+    /// `apply_thread_settings`, which is the sole handler for
+    /// `ThreadSettingsUpdatedNotification`.  Any future code path that updates
+    /// `active_environment_id` outside that notification MUST also update this
+    /// field in the same place to avoid stale-badge display.
     pub(crate) env_switch_badge: Option<String>,
     token_info: Option<TokenUsageInfo>,
     rate_limit_snapshots_by_limit_id: BTreeMap<String, RateLimitSnapshotDisplay>,

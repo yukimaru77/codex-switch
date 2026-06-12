@@ -699,7 +699,7 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mut
         planned_tools.add(TestSyncHandler);
     }
 
-    if features.enabled(Feature::EnvSwitch) {
+    if features.enabled(Feature::EnvSwitch) && environment_mode.has_environment() {
         planned_tools.add(EnvSwitchHandler);
     }
 
