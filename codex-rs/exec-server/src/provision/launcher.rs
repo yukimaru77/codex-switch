@@ -69,6 +69,56 @@ impl RemoteLauncher {
         Self { hops }
     }
 
+    /// Parses a launcher id string (as produced by [`RemoteLauncher::id`]) back
+    /// into a [`RemoteLauncher`].
+    ///
+    /// Format: `<type>:<value>` segments separated by `>`, e.g.
+    /// `"ssh:dgx>docker:c"`.  The first `:` is used as the type/value separator
+    /// so that the value may itself contain `:` characters (e.g. `user@host`).
+    ///
+    /// Returns `Err` if the string is empty, any segment has an unrecognised
+    /// type, or a required value field is absent.
+    pub fn from_id(id: &str) -> Result<Self, String> {
+        if id.is_empty() {
+            return Err("launcher id must not be empty".to_string());
+        }
+        let hops = id
+            .split('>')
+            .map(|seg| {
+                let colon = seg.find(':').ok_or_else(|| {
+                    format!("launcher id segment `{seg}` is missing a `:` separator")
+                })?;
+                let (kind, value) = (&seg[..colon], &seg[colon + 1..]);
+                if value.is_empty() {
+                    return Err(format!(
+                        "launcher id segment `{seg}` has an empty value after `:`"
+                    ));
+                }
+                match kind {
+                    "ssh" => Ok(Hop::Ssh {
+                        host: value.to_string(),
+                    }),
+                    "docker" => Ok(Hop::Docker {
+                        container: value.to_string(),
+                    }),
+                    other => Err(format!(
+                        "unknown hop type `{other}` in launcher id `{id}`; \
+                         valid types are `ssh`, `docker`"
+                    )),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { hops })
+    }
+
+    /// Returns a new launcher with `hop` appended to the end of the hop list
+    /// (i.e. one layer deeper / more inner).
+    pub fn with_appended_hop(&self, hop: Hop) -> Self {
+        let mut hops = self.hops.clone();
+        hops.push(hop);
+        Self { hops }
+    }
+
     /// Returns a stable identifier for this launcher, suitable for use as an
     /// `environment_id`.
     ///
