@@ -62,7 +62,7 @@ fn spec_has_all_expected_properties() {
         panic!("expected ToolSpec::Function");
     };
     let properties = tool.parameters.properties.unwrap_or_default();
-    for expected_key in ["target", "container", "host", "cwd"] {
+    for expected_key in ["target", "container", "host", "cwd", "hops"] {
         assert!(
             properties.contains_key(expected_key),
             "missing property `{expected_key}` in spec, found: {properties:?}"
@@ -76,9 +76,7 @@ fn spec_has_all_expected_properties() {
 
 #[test]
 fn docker_launcher_shell_argv_structure() {
-    let launcher = RemoteLauncher::Docker {
-        container: "my-container".to_string(),
-    };
+    let launcher = RemoteLauncher::docker("my-container");
     let argv = launcher.shell_argv("echo hello");
     // Docker: ["docker", "exec", "-i", "<container>", "sh", "-c", "<script>"]
     assert_eq!(argv[0], "docker");
@@ -92,18 +90,16 @@ fn docker_launcher_shell_argv_structure() {
 
 #[test]
 fn ssh_launcher_shell_argv_structure() {
-    let launcher = RemoteLauncher::Ssh {
-        host: "user@remote".to_string(),
-    };
+    let launcher = RemoteLauncher::ssh("user@remote");
     let argv = launcher.shell_argv("echo hello");
-    // SSH: ["ssh", "-T", "<host>", "sh -c '<quoted_script>'"]
+    // SSH: ["ssh", "-T", "<host>", shell_join(["sh", "-c", "<script>"])]
     assert_eq!(argv[0], "ssh");
     assert_eq!(argv[1], "-T");
     assert_eq!(argv[2], "user@remote");
     // The fourth element contains the quoted shell invocation.
     assert!(
-        argv[3].starts_with("sh -c '"),
-        "expected ssh argv[3] to start with `sh -c '`, got: {:?}",
+        argv[3].starts_with("'sh'"),
+        "expected ssh argv[3] to start with `'sh'`, got: {:?}",
         argv[3]
     );
 }
@@ -173,7 +169,7 @@ fn posix_single_quote_handles_spaces() {
     let quoted = posix_single_quote(cwd);
     assert_eq!(quoted, "'/my dir/with spaces'");
 
-    let script = format!("mkdir -p {}", quoted);
+    let script = format!("mkdir -p {quoted}");
     // The spaces appear only inside the quotes; the raw unquoted form would
     // be "/my" followed by "dir/with" as separate tokens.
     assert_eq!(script, "mkdir -p '/my dir/with spaces'");
