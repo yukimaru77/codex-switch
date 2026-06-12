@@ -130,9 +130,11 @@ impl ExecCommandHandler {
         let context = UnifiedExecContext::new(session.clone(), turn.clone(), call_id.clone());
         let environment_args: ExecCommandEnvironmentArgs = parse_arguments(&arguments)?;
         let Some(turn_environment) = resolve_tool_environment(
-            &step_context.environments,
+            &session,
+            turn.as_ref(),
             environment_args.environment_id.as_deref(),
-        )?
+        )
+        .await?
         else {
             return Err(FunctionCallError::RespondToModel(
                 "unified exec is unavailable in this session".to_string(),
