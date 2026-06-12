@@ -169,10 +169,6 @@ pub struct TurnContext {
     pub(crate) turn_timing_state: Arc<TurnTimingState>,
     pub(crate) server_model_warning_emitted: AtomicBool,
     pub(crate) model_verification_emitted: AtomicBool,
-    /// Set to `true` the first time `schedule_continuation` fires for this
-    /// turn.  A second `env_switch` call within the same turn observes the
-    /// flag and skips re-scheduling, preventing a double continuation/interrupt.
-    pub(crate) continuation_scheduled: AtomicBool,
 }
 
 enum TurnMultiAgentRuntime {
@@ -345,9 +341,6 @@ impl TurnContext {
             ),
             model_verification_emitted: AtomicBool::new(
                 self.model_verification_emitted.load(Ordering::Relaxed),
-            ),
-            continuation_scheduled: AtomicBool::new(
-                self.continuation_scheduled.load(Ordering::Relaxed),
             ),
         }
     }
@@ -648,7 +641,6 @@ impl Session {
             turn_timing_state: Arc::new(TurnTimingState::default()),
             server_model_warning_emitted: AtomicBool::new(false),
             model_verification_emitted: AtomicBool::new(false),
-            continuation_scheduled: AtomicBool::new(false),
         }
     }
 

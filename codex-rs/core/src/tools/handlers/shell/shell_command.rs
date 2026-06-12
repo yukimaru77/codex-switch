@@ -2,6 +2,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::models::ShellCommandToolCallParams;
 use codex_tools::ShellCommandBackendConfig;
 use codex_tools::ToolName;
+use serde::Deserialize;
 
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecParams;
@@ -13,7 +14,9 @@ use crate::shell::Shell;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::boxed_tool_output;
+use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
+use crate::tools::handlers::resolve_tool_environment;
 use crate::tools::handlers::resolve_workdir_base_path;
 use crate::tools::handlers::rewrite_function_string_argument;
 use crate::tools::handlers::updated_hook_command;
@@ -24,6 +27,15 @@ use crate::tools::registry::PreToolUsePayload;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::runtimes::shell::ShellRuntimeBackend;
 use codex_tools::ToolSpec;
+
+/// Minimal struct to extract `environment_id` from shell_command arguments
+/// before the full `ShellCommandToolCallParams` parse (which does not include
+/// this field so as to avoid touching the protocol type).
+#[derive(Deserialize, Default)]
+struct ShellCommandEnvironmentArgs {
+    #[serde(default)]
+    environment_id: Option<String>,
+}
 
 use super::super::shell_spec::CommandToolOptions;
 use super::super::shell_spec::create_shell_command_tool;
@@ -167,11 +179,35 @@ impl ShellCommandHandler {
             )));
         };
 
-        #[allow(deprecated)]
-        let cwd = resolve_workdir_base_path(&arguments, &turn.cwd)?;
+        // Resolve the environment_id before parsing the full params so that
+        // the cwd used for relative-path resolution comes from the selected
+        // environment rather than the deprecated turn-level cwd.
+        let env_args: ShellCommandEnvironmentArgs = parse_arguments(&arguments).unwrap_or_default();
+        let resolved_environment =
+            resolve_tool_environment(&session, turn.as_ref(), env_args.environment_id.as_deref())
+                .await?;
+
+        let base_cwd = resolved_environment
+            .as_ref()
+            .map(|e| e.cwd.clone())
+            .or_else(|| {
+                #[allow(deprecated)]
+                Some(turn.cwd.clone())
+            })
+            .unwrap();
+        let cwd = resolve_workdir_base_path(&arguments, &base_cwd)?;
         let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
         #[allow(deprecated)]
-        let workdir = turn.resolve_path(params.workdir.clone());
+        let workdir = resolved_environment
+            .as_ref()
+            .map(|e| {
+                params
+                    .workdir
+                    .as_deref()
+                    .filter(|w| !w.is_empty())
+                    .map_or_else(|| e.cwd.clone(), |w| e.cwd.join(w))
+            })
+            .unwrap_or_else(|| turn.resolve_path(params.workdir.clone()));
         maybe_emit_implicit_skill_invocation(
             session.as_ref(),
             turn.as_ref(),
@@ -180,13 +216,16 @@ impl ShellCommandHandler {
         )
         .await;
         let prefix_rule = params.prefix_rule.clone();
-        let exec_params = Self::to_exec_params(
+        let mut exec_params = Self::to_exec_params(
             &params,
             session.as_ref(),
             turn.as_ref(),
             session.thread_id,
             turn.config.permissions.allow_login_shell,
         )?;
+        // Override cwd with the resolved environment's working directory so
+        // that shell commands are launched in the correct remote directory.
+        exec_params.cwd = workdir.clone();
         let shell_type = Some(session.user_shell().shell_type);
         run_exec_like(RunExecLikeArgs {
             tool_name,
@@ -201,6 +240,7 @@ impl ShellCommandHandler {
             tracker,
             call_id,
             shell_runtime_backend: self.shell_runtime_backend(),
+            resolved_environment,
         })
         .await
         .map(boxed_tool_output)
