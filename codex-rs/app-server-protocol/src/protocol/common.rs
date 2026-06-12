@@ -4415,6 +4415,7 @@ mod tests {
                     },
                     multi_agent_mode: Default::default(),
                     personality: None,
+                    active_environment_id: None,
                 },
             });
 

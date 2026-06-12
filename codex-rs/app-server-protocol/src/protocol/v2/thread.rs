@@ -303,6 +303,10 @@ pub struct ThreadSettings {
     #[serde(default)]
     pub multi_agent_mode: MultiAgentMode,
     pub personality: Option<Personality>,
+    /// The active execution environment id when a non-local environment has
+    /// been selected (e.g. `"docker:container"` or `"ssh:host"`).
+    /// `None` means the thread is running in the default local environment.
+    pub active_environment_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
