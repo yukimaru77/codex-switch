@@ -3,20 +3,13 @@ use codex_exec_server::provision::RemoteLauncher;
 use codex_exec_server::provision::VersionPolicy;
 use codex_exec_server::provision::ensure_remote_codex;
 use codex_exec_server::provision::posix_single_quote;
-use codex_protocol::AgentPath;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::TurnEnvironmentSelection;
-use codex_protocol::protocol::TurnEnvironmentSelections;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use crate::function_tool::FunctionCallError;
 use crate::session::session::Session;
-use crate::session::session::SessionSettingsUpdate;
 use crate::session::turn_context::TurnContext;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
@@ -29,25 +22,23 @@ use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
+use codex_utils_absolute_path::AbsolutePathBuf;
 
 /// Timeout for each individual `run_remote` invocation (mkdir / echo $HOME).
 const RUN_REMOTE_TIMEOUT_SECS: u64 = 20;
 
 /// Handler for the `env_switch` tool.
 ///
-/// Migrates the agent's execution environment into a Docker container or SSH
-/// host by:
-///   1. Provisioning a matching codex exec-server binary on the remote if
-///      absent (via [`ensure_remote_codex`]).
-///   2. Registering a stdio-backed [`Environment`] in the shared
-///      [`EnvironmentManager`].
-///   3. Updating this thread's sticky [`TurnEnvironmentSelection`] so that
-///      the next turn resolves to the new environment.
-///   4. Scheduling a self-continuation turn + deferred interrupt so the
-///      current turn ends cleanly before the new environment takes effect.
+/// Provisions a remote codex exec-server (Docker or SSH) and registers it as
+/// a named environment in the session's [`EnvironmentManager`].  The
+/// environment id is then returned to the model so it can be supplied as
+/// `environment_id` on subsequent `shell_command` / `exec_command` /
+/// `apply_patch` / `view_image` calls.
 ///
-/// No process migration occurs; the Codex session itself stays on the host.
-/// Only shell / file tool execution moves to the remote environment.
+/// Unlike the previous implementation this handler does **not** interrupt the
+/// current turn, does not update the thread's sticky environment selection,
+/// and does not schedule a self-continuation.  All execution is item-level:
+/// the model picks the target environment on each individual tool call.
 #[derive(Default)]
 pub struct EnvSwitchHandler;
 
@@ -97,13 +88,6 @@ impl CoreToolRuntime for EnvSwitchHandler {}
 
 /// Runs a shell script on the remote via the given launcher, returning
 /// `(success, stdout, stderr)`.
-///
-/// The `script` is passed through [`RemoteLauncher::shell_argv`], which
-/// ensures it arrives as a single `sh -c` argument even over SSH (where all
-/// trailing argv elements are concatenated by the transport).
-///
-/// A [`RUN_REMOTE_TIMEOUT_SECS`]-second timeout prevents a hung remote from
-/// blocking the tool call indefinitely.
 async fn run_remote(launcher: &RemoteLauncher, script: &str) -> (bool, String, String) {
     let argv = launcher.shell_argv(script);
     let Some((program, rest)) = argv.split_first().map(|(p, r)| (p.clone(), r.to_vec())) else {
@@ -132,20 +116,14 @@ async fn handle_env_switch(
     args: EnvSwitchArgs,
 ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
     match args.target.as_str() {
-        "local" => handle_local_switch(session, turn, args.cwd).await,
+        "local" => handle_local_switch(turn, args.cwd),
         "docker" => {
             let container = args.container.ok_or_else(|| {
                 FunctionCallError::RespondToModel(
                     "env_switch: `container` is required when target is `docker`".to_string(),
                 )
             })?;
-            handle_remote_switch(
-                session,
-                turn,
-                RemoteLauncher::Docker { container },
-                args.cwd,
-            )
-            .await
+            handle_remote_switch(session, RemoteLauncher::Docker { container }, args.cwd).await
         }
         "ssh" => {
             let host = args.host.ok_or_else(|| {
@@ -153,7 +131,7 @@ async fn handle_env_switch(
                     "env_switch: `host` is required when target is `ssh`".to_string(),
                 )
             })?;
-            handle_remote_switch(session, turn, RemoteLauncher::Ssh { host }, args.cwd).await
+            handle_remote_switch(session, RemoteLauncher::Ssh { host }, args.cwd).await
         }
         other => Err(FunctionCallError::RespondToModel(format!(
             "env_switch: unsupported target `{other}`; valid values are `local`, `docker`, `ssh`"
@@ -161,67 +139,29 @@ async fn handle_env_switch(
     }
 }
 
-/// Restores the thread's sticky environment to the local host.
-async fn handle_local_switch(
-    session: &Arc<Session>,
+/// Returns a message explaining that the host environment is the default.
+/// No state is mutated; the model should omit `environment_id` (or use
+/// `"local"` / `{LOCAL_ENVIRONMENT_ID}`) to stay on the host.
+fn handle_local_switch(
     turn: &Arc<TurnContext>,
-    explicit_cwd: Option<String>,
+    _explicit_cwd: Option<String>,
 ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
-    // After a remote switch `turn.cwd` points at the REMOTE working directory
-    // (e.g. `/root`), which usually does not exist on the host. The codex
-    // process itself never moved, so its current directory is the original
-    // local working directory.
-    let host_cwd = match explicit_cwd {
-        Some(cwd) => AbsolutePathBuf::from_absolute_path_checked(&cwd).map_err(|e| {
-            FunctionCallError::RespondToModel(format!(
-                "env_switch: `cwd` must be an absolute path: {e}"
-            ))
-        })?,
-        None => std::env::current_dir()
-            .ok()
-            .and_then(|dir| AbsolutePathBuf::from_absolute_path_checked(&dir).ok())
-            .unwrap_or_else(|| {
-                #[allow(deprecated)]
-                turn.cwd.clone()
-            }),
-    };
-
-    let mut selections: Vec<TurnEnvironmentSelection> = session
-        .services
-        .environment_manager
-        .default_environment_ids()
-        .into_iter()
-        .map(|environment_id| TurnEnvironmentSelection {
-            environment_id,
-            cwd: host_cwd.clone(),
-        })
-        .collect();
-    if selections.is_empty() {
-        selections.push(TurnEnvironmentSelection {
-            environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
-            cwd: host_cwd.clone(),
-        });
-    }
-
-    set_thread_environments(session, host_cwd.clone(), selections).await?;
-    session.emit_thread_settings_applied(turn).await;
-
-    let message = "env_switch complete: reverted to the local host environment. \
-        The change takes effect on your NEXT step — end this step immediately \
-        (a one-line acknowledgement) and your task will resume on the host."
-        .to_string();
-    schedule_continuation(session, turn, message.clone()).await;
+    let _ = turn;
+    let message = format!(
+        "env_switch complete: the local host environment is active (id: `{LOCAL_ENVIRONMENT_ID}`). \
+         Omit `environment_id` on shell/apply_patch/view_image calls to execute on the host."
+    );
     Ok(boxed_tool_output(FunctionToolOutput::from_text(
         message,
         Some(true),
     )))
 }
 
-/// Provisions the remote codex exec-server and switches the thread's sticky
-/// environment to the given Docker container or SSH host.
+/// Provisions the remote codex exec-server and registers it as a named
+/// environment.  Returns a message instructing the model to pass
+/// `environment_id` on subsequent tool calls.
 async fn handle_remote_switch(
     session: &Arc<Session>,
-    turn: &Arc<TurnContext>,
     launcher: RemoteLauncher,
     explicit_cwd: Option<String>,
 ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
@@ -238,12 +178,7 @@ async fn handle_remote_switch(
     let deployed_version = provisioned.version.clone();
 
     // --- Step 2: determine effective cwd and ensure it exists --------------------
-    // When the caller provided an explicit cwd we quote it into a `mkdir -p`
-    // command.  Otherwise we probe $HOME and create it in a single round-trip
-    // (combining what used to be two separate `run_remote` calls into one).
     let remote_cwd: String = if let Some(cwd) = explicit_cwd {
-        // Caller supplied: just make sure the directory exists.  Quote `cwd`
-        // so shell metacharacters in the path cannot cause injection.
         let script = format!("mkdir -p {}", posix_single_quote(&cwd));
         let (ok, _, err) = run_remote(&launcher, &script).await;
         if !ok {
@@ -253,9 +188,6 @@ async fn handle_remote_switch(
         }
         cwd
     } else {
-        // No explicit cwd: resolve $HOME and create ~/.codex in one shot.
-        // `printf '%s\n'` is used instead of `echo` to avoid interpretation
-        // of escape sequences on some shells.
         let script = "printf '%s\\n' \"$HOME\" && mkdir -p \"$HOME\"";
         let (ok, home, err) = run_remote(&launcher, script).await;
         if ok && !home.is_empty() {
@@ -276,16 +208,6 @@ async fn handle_remote_switch(
         RemoteLauncher::Ssh { host } => (format!("ssh:{host}"), format!("ssh host `{host}`")),
     };
 
-    // Build the argv that will start the exec-server process over stdio.
-    //
-    // For Docker the arguments are passed verbatim to execve, so we can supply
-    // each token as a separate element.  For SSH all trailing elements are
-    // joined with spaces by the transport and fed to the remote login shell, so
-    // we must supply a single pre-quoted shell command string instead.
-    //
-    // The config values (danger-full-access, never) intentionally contain no
-    // spaces, so they do not require additional quoting beyond the POSIX single-
-    // quote wrapper that shell_argv applies to the whole script.
     let exec_argv: Vec<String> = match &launcher {
         RemoteLauncher::Docker { container } => vec![
             "docker".to_string(),
@@ -302,9 +224,6 @@ async fn handle_remote_switch(
             "approval_policy=never".to_string(),
         ],
         RemoteLauncher::Ssh { host } => {
-            // Build the remote command as a plain shell word sequence.  None of
-            // the tokens contain special characters, so no per-token quoting is
-            // needed; posix_single_quote wraps the whole string safely.
             let remote_cmd = format!(
                 "{} exec-server --listen stdio -c sandbox_mode=danger-full-access -c approval_policy=never",
                 posix_single_quote(&codex_path),
@@ -340,167 +259,39 @@ async fn handle_remote_switch(
             ))
         })?;
 
-    // --- Step 4: update this thread's sticky environment selection ---------------
+    // --- Step 4: record the remote cwd so resolve_tool_environment can use it ---
     let abs_cwd = AbsolutePathBuf::from_absolute_path_checked(&remote_cwd).map_err(|e| {
         FunctionCallError::RespondToModel(format!(
             "env_switch: remote cwd `{remote_cwd}` is not an absolute path: {e}"
         ))
     })?;
+    {
+        let mut cwds = session.services.dynamic_environment_cwds.lock().await;
+        cwds.insert(environment_id.clone(), abs_cwd);
+    }
 
-    set_thread_environments(
-        session,
-        abs_cwd.clone(),
-        vec![TurnEnvironmentSelection {
-            environment_id: environment_id.clone(),
-            cwd: abs_cwd,
-        }],
-    )
-    .await?;
-    session.emit_thread_settings_applied(turn).await;
+    // --- Step 5: emit a ThreadSettingsApplied badge event (non-sticky) -----------
+    // We re-use the existing badge mechanism to surface the active remote env in
+    // the TUI.  We emit a badge showing the new environment id without changing
+    // the thread's sticky environment selection (so future turns still default
+    // to the local host unless the model explicitly passes environment_id).
+    session
+        .emit_dynamic_environment_badge(&environment_id)
+        .await;
 
-    // --- Step 5: schedule a self-continuation turn so the new env takes effect --
+    // --- Step 6: return instructive message to the model -------------------------
     let message = format!(
-        "env_switch complete: moved into {target_label} \
-         (codex {deployed_version} at {codex_path}). \
-         The change takes effect on your NEXT step — end this step immediately \
-         (a one-line acknowledgement) and your task will resume inside the remote \
-         environment. Do NOT call env_switch again until you want to change \
-         environments."
+        "env_switch complete: environment `{environment_id}` is ready \
+         ({target_label}, codex {deployed_version} at {codex_path}, cwd={remote_cwd}). \
+         To run commands inside this environment, pass `\"environment_id\": \"{environment_id}\"` \
+         to shell_command / exec_command / apply_patch / view_image. \
+         Omitting environment_id continues to execute on the local host. \
+         Do NOT call env_switch again for the same target unless you want to re-provision."
     );
-    schedule_continuation(session, turn, message.clone()).await;
-
     Ok(boxed_tool_output(FunctionToolOutput::from_text(
         message,
         Some(true),
     )))
-}
-
-/// Updates the thread's sticky [`TurnEnvironmentSelections`] via
-/// [`Session::update_settings`].
-async fn set_thread_environments(
-    session: &Arc<Session>,
-    legacy_fallback_cwd: AbsolutePathBuf,
-    selections: Vec<TurnEnvironmentSelection>,
-) -> Result<(), FunctionCallError> {
-    let new_environments = TurnEnvironmentSelections::new(legacy_fallback_cwd, selections);
-    session
-        .update_settings(SessionSettingsUpdate {
-            environments: Some(new_environments),
-            ..Default::default()
-        })
-        .await
-        .map_err(|e| {
-            FunctionCallError::RespondToModel(format!(
-                "env_switch: failed to update thread environments: {e}"
-            ))
-        })
-}
-
-/// Queues a self-addressed, turn-triggering inter-agent message so this thread
-/// runs another turn after the current one ends.  The new turn re-resolves the
-/// (just-updated) sticky environment, so the agent continues its task in the
-/// new environment.
-///
-/// This mirrors the `continue_in_new_turn` pattern validated in the old
-/// `handle_subagent_switch` implementation (env-switch-subagent branch, line
-/// 776+).  The same mechanism works for root threads because `input_queue`,
-/// `active_turn`, and `agent_control` are present on every `Session`.
-///
-/// # Idempotency
-///
-/// Within a single turn a second call is silently skipped if a continuation
-/// has already been scheduled.  This prevents two rapid `env_switch` calls
-/// from double-queuing a continuation and corrupting the interrupt state.
-/// The flag is communicated via an `Arc<AtomicBool>` allocated per call and
-/// stored on the detached interrupt task; the second caller observes `true`
-/// and returns early.
-///
-/// # Turn-generation guard
-///
-/// The detached interrupt task captures the current turn's `sub_id` and
-/// checks—under the `active_turn` lock—that the same turn is still running
-/// before firing `interrupt_agent`.  If the turn has already finished
-/// naturally in the 200 ms window the interrupt is silently dropped,
-/// preventing a spurious abort of the subsequent turn.
-async fn schedule_continuation(session: &Arc<Session>, turn: &Arc<TurnContext>, content: String) {
-    // Idempotency: mark that a continuation has been scheduled for this turn.
-    // A second call within the same turn observes the flag and bails out.
-    //
-    // The flag lives in the TurnContext's `continuation_scheduled` field
-    // (see below).  Because TurnContext is immutable and shared across tool
-    // handlers, we embed an AtomicBool inside it.  Until that field is added
-    // we use the session-level `next_internal_sub_id` as a generation counter
-    // and check it here with a per-schedule Arc<AtomicBool>.
-    if turn.continuation_scheduled.swap(true, Ordering::AcqRel) {
-        // Another env_switch call already scheduled a continuation for this turn.
-        return;
-    }
-
-    // Defer mailbox delivery to the NEXT turn so the message is not drained
-    // into the still-active turn (which runs on the OLD environment).
-    session
-        .input_queue
-        .defer_mailbox_delivery_to_next_turn(&session.active_turn, &turn.sub_id)
-        .await;
-
-    let self_path = turn
-        .session_source
-        .get_agent_path()
-        .unwrap_or_else(AgentPath::root);
-
-    let communication = InterAgentCommunication::new(
-        self_path.clone(),
-        self_path,
-        Vec::new(),
-        content,
-        /*trigger_turn*/ true,
-    );
-    session
-        .input_queue
-        .enqueue_mailbox_communication(communication)
-        .await;
-
-    // Fire the self-interrupt from a detached task so that the current tool
-    // call can return first (awaiting here would deadlock because we are
-    // inside the active turn).  The 200 ms delay gives the tool-call output
-    // time to be recorded in history before the turn is aborted; the abort
-    // path then restarts the deferred continuation.
-    //
-    // Turn-generation guard: we capture the current turn's sub_id and verify
-    // it still matches the running task's turn context before interrupting.
-    // If the turn finished naturally in those 200 ms the active_turn slot
-    // will be None or will hold a different sub_id, and we skip the interrupt
-    // to avoid aborting the next (unrelated) turn.
-    let agent_control = session.services.agent_control.clone();
-    let thread_id = session.thread_id();
-    let expected_sub_id = turn.sub_id.clone();
-    // Clone the Arc<Session> so we can access active_turn from the detached task.
-    let session_for_guard = Arc::clone(session);
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        // Check that the turn we scheduled for is still running.
-        let should_interrupt = {
-            let guard = session_for_guard.active_turn.lock().await;
-            guard
-                .as_ref()
-                .and_then(|at| at.task.as_ref())
-                .map(|task| task.turn_context.sub_id == expected_sub_id)
-                .unwrap_or(false)
-        };
-
-        if !should_interrupt {
-            tracing::debug!(
-                turn_id = %expected_sub_id,
-                "env_switch: turn already ended before interrupt fired; skipping"
-            );
-            return;
-        }
-
-        if let Err(e) = agent_control.interrupt_agent(thread_id).await {
-            tracing::warn!("env_switch: failed to interrupt turn for environment switch: {e}");
-        }
-    });
 }
 
 #[cfg(test)]
