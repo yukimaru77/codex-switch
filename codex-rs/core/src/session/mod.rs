@@ -57,6 +57,8 @@ use codex_config::types::AuthKeyringBackendKind;
 use codex_config::types::OAuthCredentialsStoreMode;
 use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentManager;
+use codex_exec_server::FileSystemSandboxContext;
+use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_extension_api::ExtensionDataInit;
 use codex_extension_api::LoadedUserInstructions;
 use codex_extension_api::PromptFragment;
@@ -372,6 +374,8 @@ use codex_protocol::protocol::SessionNetworkProxyRuntime;
 use codex_protocol::protocol::StreamErrorEvent;
 use codex_protocol::protocol::Submission;
 use codex_protocol::protocol::ThreadMemoryMode;
+use codex_protocol::protocol::ThreadSettingsAppliedEvent;
+use codex_protocol::protocol::ThreadSettingsSnapshot;
 use codex_protocol::protocol::TokenCountEvent;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TokenUsageInfo;
@@ -1552,6 +1556,47 @@ impl Session {
         }
 
         Ok(())
+    }
+
+    /// Emits a [`EventMsg::ThreadSettingsApplied`] event reflecting the
+    /// thread's current settings, including the active environment id (if any).
+    ///
+    /// Call this after [`Self::update_settings`] when the update should be
+    /// visible to TUI clients as a status-badge change (e.g. after an
+    /// `env_switch` tool call).
+    pub(crate) async fn emit_thread_settings_applied(&self, turn_context: &TurnContext) {
+        let (snapshot, active_environment_id) = {
+            let state = self.state.lock().await;
+            let snapshot = state.session_configuration.thread_config_snapshot();
+            // Report the first sticky environment as the active one.  The
+            // local environment id ("local") means no badge; any other value
+            // (e.g. "docker:container" or "ssh:host") surfaces a status badge.
+            let active_environment_id = snapshot
+                .environment_selections()
+                .first()
+                .map(|sel| sel.environment_id.clone())
+                .filter(|id| id != LOCAL_ENVIRONMENT_ID);
+            (snapshot, active_environment_id)
+        };
+        let cwd = snapshot.cwd().clone();
+        let msg = EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent {
+            thread_settings: ThreadSettingsSnapshot {
+                model: snapshot.model,
+                model_provider_id: snapshot.model_provider_id,
+                service_tier: snapshot.service_tier,
+                approval_policy: snapshot.approval_policy,
+                approvals_reviewer: snapshot.approvals_reviewer,
+                permission_profile: snapshot.permission_profile,
+                active_permission_profile: snapshot.active_permission_profile,
+                cwd,
+                active_environment_id,
+                reasoning_effort: snapshot.reasoning_effort,
+                reasoning_summary: snapshot.reasoning_summary,
+                personality: snapshot.personality,
+                collaboration_mode: snapshot.collaboration_mode,
+            },
+        });
+        self.send_event(turn_context, msg).await;
     }
 
     pub(crate) async fn preview_settings(
