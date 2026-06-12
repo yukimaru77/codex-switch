@@ -1,5 +1,7 @@
 //! Error type for remote provisioning operations.
 
+use codex_client::BuildCustomCaTransportError;
+
 /// Errors that can occur while probing or provisioning a remote codex binary.
 #[derive(Debug, thiserror::Error)]
 pub enum ProvisionError {
@@ -23,6 +25,10 @@ pub enum ProvisionError {
     #[error("failed to fetch release from GitHub: {0}")]
     Http(#[from] reqwest::Error),
 
+    /// Building the HTTP client failed (e.g. bad CA certificate path).
+    #[error("failed to build HTTP client: {0}")]
+    HttpClientBuild(#[from] BuildCustomCaTransportError),
+
     /// The downloaded archive digest did not match the expected value.
     #[error("SHA-256 mismatch for {asset}: expected {expected}, got {actual}")]
     DigestMismatch {
@@ -42,4 +48,8 @@ pub enum ProvisionError {
     /// The remote codex binary reported an unexpected version after install.
     #[error("post-install version check failed: expected {expected}, got {actual}")]
     VersionCheckFailed { expected: String, actual: String },
+
+    /// A command exceeded its allowed time limit.
+    #[error("command timed out after {secs}s: {context}")]
+    Timeout { secs: u64, context: String },
 }
