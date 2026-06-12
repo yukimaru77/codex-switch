@@ -5978,6 +5978,8 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         ),
         tool_search_handler_cache: Default::default(),
         turn_environments: Arc::clone(&turn_environments),
+        environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+        dynamic_environment_cwds: Mutex::new(HashMap::new()),
     };
 
     let session = Session {
@@ -8187,6 +8189,8 @@ where
         ),
         tool_search_handler_cache: Default::default(),
         turn_environments: Arc::clone(&turn_environments),
+        environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+        dynamic_environment_cwds: Mutex::new(HashMap::new()),
     };
 
     let session = Arc::new(Session {

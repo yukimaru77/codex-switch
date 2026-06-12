@@ -1246,7 +1246,7 @@ impl Session {
         }
     }
 
-    fn next_internal_sub_id(&self) -> String {
+    pub(crate) fn next_internal_sub_id(&self) -> String {
         let id = self
             .next_internal_sub_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1643,6 +1643,7 @@ impl Session {
     /// Call this after [`Self::update_settings`] when the update should be
     /// visible to TUI clients as a status-badge change (e.g. after an
     /// `env_switch` tool call).
+    #[allow(dead_code)]
     pub(crate) async fn emit_thread_settings_applied(&self, turn_context: &TurnContext) {
         let (snapshot, active_environment_id) = {
             let state = self.state.lock().await;
@@ -1676,6 +1677,48 @@ impl Session {
             },
         });
         self.send_event(turn_context, msg).await;
+    }
+
+    /// Emits a `ThreadSettingsApplied` badge event that shows `environment_id`
+    /// as the active environment in TUI clients.  Unlike
+    /// [`Self::emit_thread_settings_applied`] this does **not** require a
+    /// `TurnContext` and does **not** change the thread's sticky environment
+    /// selection — it is a display-only notification used by `env_switch` after
+    /// registering a dynamic environment.
+    ///
+    /// Passing `environment_id = LOCAL_ENVIRONMENT_ID` (or an empty string)
+    /// clears the badge.
+    pub(crate) async fn emit_dynamic_environment_badge(&self, environment_id: &str) {
+        let snapshot = {
+            let state = self.state.lock().await;
+            state.session_configuration.thread_config_snapshot()
+        };
+        let cwd = snapshot.cwd().clone();
+        let active_environment_id =
+            if environment_id.is_empty() || environment_id == LOCAL_ENVIRONMENT_ID {
+                None
+            } else {
+                Some(environment_id.to_string())
+            };
+        let msg = EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent {
+            thread_settings: ThreadSettingsSnapshot {
+                model: snapshot.model,
+                model_provider_id: snapshot.model_provider_id,
+                service_tier: snapshot.service_tier,
+                approval_policy: snapshot.approval_policy,
+                approvals_reviewer: snapshot.approvals_reviewer,
+                permission_profile: snapshot.permission_profile,
+                active_permission_profile: snapshot.active_permission_profile,
+                cwd,
+                active_environment_id,
+                reasoning_effort: snapshot.reasoning_effort,
+                reasoning_summary: snapshot.reasoning_summary,
+                personality: snapshot.personality,
+                collaboration_mode: snapshot.collaboration_mode,
+            },
+        });
+        let event_id = self.next_internal_sub_id();
+        self.send_event_raw(Event { id: event_id, msg }).await;
     }
 
     pub(crate) async fn preview_settings(

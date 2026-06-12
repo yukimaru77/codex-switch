@@ -91,20 +91,14 @@ pub(crate) async fn resolve_latest_version() -> Result<String, ProvisionError> {
     let client = build_reqwest_client_with_custom_ca(
         reqwest::Client::builder().user_agent("codex-exec-server"),
     )?;
-    let mut request =
-        client.get("https://api.github.com/repos/openai/codex/releases/latest");
+    let mut request = client.get("https://api.github.com/repos/openai/codex/releases/latest");
     // Authenticate when a token is available so the unauthenticated 60 req/hr
     // limit (which breaks provisioning under repeated use) is lifted to the
     // authenticated 5000 req/hr limit.
     if let Some(token) = github_token() {
         request = request.bearer_auth(token);
     }
-    let json = request
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
+    let json = request.send().await?.error_for_status()?.text().await?;
 
     parse_latest_tag_name(&json)
 }
