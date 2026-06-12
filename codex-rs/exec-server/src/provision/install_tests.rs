@@ -74,9 +74,7 @@ fn verify_remote_version_cmd_quotes_path_with_spaces() {
     // Simulate building the version command the same way verify_remote_version
     // does, and confirm the shell word is safe.
     let version_cmd = format!("{quoted} --version");
-    let launcher = RemoteLauncher::Docker {
-        container: "c".to_string(),
-    };
+    let launcher = RemoteLauncher::docker("c");
     let argv = launcher.shell_argv(&version_cmd);
     // The script arg (last element for Docker) must contain the quoted path.
     let script = argv.last().unwrap();
