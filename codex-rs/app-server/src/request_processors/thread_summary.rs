@@ -175,6 +175,11 @@ pub(crate) fn thread_response_active_permission_profile(
 pub(crate) fn thread_settings_from_config_snapshot(
     config_snapshot: &ThreadConfigSnapshot,
 ) -> ThreadSettings {
+    let active_environment_id = config_snapshot
+        .environment_selections()
+        .first()
+        .map(|sel| sel.environment_id.clone())
+        .filter(|id| id != codex_exec_server::LOCAL_ENVIRONMENT_ID);
     ThreadSettings {
         cwd: config_snapshot.cwd().clone(),
         approval_policy: config_snapshot.approval_policy.into(),
@@ -191,6 +196,7 @@ pub(crate) fn thread_settings_from_config_snapshot(
         collaboration_mode: config_snapshot.collaboration_mode.clone(),
         multi_agent_mode: MultiAgentMode::ExplicitRequestOnly,
         personality: config_snapshot.personality,
+        active_environment_id,
     }
 }
 
@@ -206,6 +212,7 @@ pub(crate) fn thread_settings_from_core_snapshot(
         permission_profile,
         active_permission_profile,
         cwd,
+        active_environment_id,
         reasoning_effort,
         reasoning_summary,
         personality,
@@ -232,6 +239,7 @@ pub(crate) fn thread_settings_from_core_snapshot(
         collaboration_mode,
         multi_agent_mode: MultiAgentMode::ExplicitRequestOnly,
         personality,
+        active_environment_id,
     }
 }
 
