@@ -1,5 +1,6 @@
 use pretty_assertions::assert_eq;
 
+use super::normalize_version;
 use super::parse_sha256sums;
 use super::parse_version_output;
 use crate::provision::RemoteLauncher;
@@ -96,6 +97,70 @@ fn verify_remote_version_cmd_escapes_single_quote_in_path() {
         !quoted.contains("user's"),
         "raw quote must not appear in output"
     );
+}
+
+// ---------------------------------------------------------------------------
+// normalize_version tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn normalize_version_strips_leading_v() {
+    assert_eq!(normalize_version("v1.2.3"), "1.2.3");
+}
+
+#[test]
+fn normalize_version_no_leading_v() {
+    assert_eq!(normalize_version("1.2.3"), "1.2.3");
+}
+
+#[test]
+fn normalize_version_trims_whitespace() {
+    assert_eq!(normalize_version("  1.2.3  "), "1.2.3");
+    assert_eq!(normalize_version("  v1.2.3  "), "1.2.3");
+}
+
+#[test]
+fn normalize_version_equal_with_and_without_v() {
+    assert_eq!(normalize_version("v1.2.3"), normalize_version("1.2.3"));
+}
+
+// ---------------------------------------------------------------------------
+// Streaming SHA-256 digest test
+// ---------------------------------------------------------------------------
+
+/// Verifies that the streaming digest path (chunk-by-chunk update) produces
+/// the same result as a one-shot digest over the same bytes.
+#[test]
+fn streaming_sha256_matches_oneshot() {
+    use sha2::Digest;
+    use sha2::Sha256;
+    use std::fmt::Write;
+
+    let data: Vec<u8> = (0u8..=255).cycle().take(1_000_000).collect();
+
+    // One-shot reference.
+    let oneshot = {
+        let hash = Sha256::digest(&data);
+        hash.iter().fold(String::with_capacity(64), |mut acc, b| {
+            let _ = write!(acc, "{b:02x}");
+            acc
+        })
+    };
+
+    // Streaming in 64 KiB chunks (mirrors install logic).
+    let streaming = {
+        let mut hasher = Sha256::new();
+        for chunk in data.chunks(64 * 1024) {
+            hasher.update(chunk);
+        }
+        let hash = hasher.finalize();
+        hash.iter().fold(String::with_capacity(64), |mut acc, b| {
+            let _ = write!(acc, "{b:02x}");
+            acc
+        })
+    };
+
+    assert_eq!(oneshot, streaming);
 }
 
 /// Verify that `release_dir` and `remote_home` values containing spaces

@@ -1,9 +1,11 @@
+use codex_exec_server::EnvironmentMetadata;
 use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_exec_server::provision::Hop;
 use codex_exec_server::provision::RemoteLauncher;
 use codex_exec_server::provision::VersionPolicy;
 use codex_exec_server::provision::ensure_remote_codex;
 use codex_exec_server::provision::posix_single_quote;
+use codex_exec_server::provision::validate_hop_value;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -36,16 +38,17 @@ const RUN_REMOTE_TIMEOUT_SECS: u64 = 20;
 /// `environment_id` on subsequent `shell_command` / `exec_command` /
 /// `apply_patch` / `view_image` calls.
 ///
-/// Unlike the previous implementation this handler does **not** interrupt the
-/// current turn, does not update the thread's sticky environment selection,
-/// and does not schedule a self-continuation.  All execution is item-level:
-/// the model picks the target environment on each individual tool call.
+/// This handler is item-level: the model picks the target environment on each
+/// individual tool call.  Provisioning does not interrupt the current turn and
+/// does not change the thread's sticky environment selection.  The badge emitted
+/// via [`Session::emit_dynamic_environment_badge`] is display-only and shows
+/// the most recently provisioned remote environment.
 #[derive(Default)]
 pub struct EnvSwitchHandler;
 
 /// A single hop element as supplied by the model in the `hops` array.
 #[derive(Deserialize)]
-struct HopArg {
+pub(super) struct HopArg {
     #[serde(rename = "type")]
     hop_type: String,
     host: Option<String>,
@@ -128,14 +131,23 @@ async fn run_remote(launcher: &RemoteLauncher, script: &str) -> (bool, String, S
 }
 
 /// Converts a `HopArg` from the model into a [`Hop`], returning an error
-/// message if required fields are missing.
-fn hop_from_arg(arg: HopArg) -> Result<Hop, FunctionCallError> {
+/// message if required fields are missing or contain unsafe values.
+///
+/// Validation via [`validate_hop_value`] rejects values that are empty, start
+/// with `-` (would be interpreted as CLI flags), or contain `>` (the id
+/// segment separator that would corrupt round-trip parsing).
+pub(super) fn hop_from_arg(arg: HopArg) -> Result<Hop, FunctionCallError> {
     match arg.hop_type.as_str() {
         "ssh" => {
             let host = arg.host.ok_or_else(|| {
                 FunctionCallError::RespondToModel(
                     "env_switch: each hop of type `ssh` requires a `host` field".to_string(),
                 )
+            })?;
+            validate_hop_value(&host).map_err(|e| {
+                FunctionCallError::RespondToModel(format!(
+                    "env_switch: invalid `host` value for ssh hop: {e}"
+                ))
             })?;
             Ok(Hop::Ssh { host })
         }
@@ -145,6 +157,11 @@ fn hop_from_arg(arg: HopArg) -> Result<Hop, FunctionCallError> {
                     "env_switch: each hop of type `docker` requires a `container` field"
                         .to_string(),
                 )
+            })?;
+            validate_hop_value(&container).map_err(|e| {
+                FunctionCallError::RespondToModel(format!(
+                    "env_switch: invalid `container` value for docker hop: {e}"
+                ))
             })?;
             Ok(Hop::Docker { container })
         }
@@ -166,27 +183,34 @@ async fn handle_env_switch(
 
         // Determine the base launcher.
         let base_launcher: RemoteLauncher = if let Some(base_id) = args.base {
-            // Explicit base: restore from id string.
+            // Explicit base: validate and reconstruct from id string.
+            // Only launchers whose ids can be round-tripped through from_id are
+            // accepted; this rejects arbitrary user-supplied strings.
             RemoteLauncher::from_id(&base_id).map_err(|e| {
                 FunctionCallError::RespondToModel(format!(
                     "env_switch: invalid `base` environment id `{base_id}`: {e}"
                 ))
             })?
         } else {
-            // Implicit base: use the thread's most-recently-activated launcher.
-            let cursors = session.services.last_remote_launcher.lock().await;
-            cursors.get(&session.thread_id).cloned().ok_or_else(|| {
-                FunctionCallError::RespondToModel(
-                    "env_switch: relative mode requires a `base` or a previously-activated \
+            // Implicit base: use the thread's most-recently-activated launcher
+            // stored in the shared EnvironmentManager.
+            let thread_key = session.thread_id.to_string();
+            session
+                .services
+                .environment_manager
+                .get_last_launcher(&thread_key)
+                .ok_or_else(|| {
+                    FunctionCallError::RespondToModel(
+                        "env_switch: relative mode requires a `base` or a previously-activated \
                          remote environment on this thread, but none was found. \
                          Provide an explicit `base` environment_id."
-                        .to_string(),
-                )
-            })?
+                            .to_string(),
+                    )
+                })?
         };
 
         let new_launcher = base_launcher.with_appended_hop(extend_hop);
-        return handle_remote_switch(session, new_launcher, args.cwd).await;
+        return handle_remote_switch(session, turn, new_launcher, args.cwd).await;
     }
 
     // --- Priority 2: absolute multi-hop (hops array) -------------------------
@@ -201,7 +225,7 @@ async fn handle_env_switch(
             .map(hop_from_arg)
             .collect::<Result<_, _>>()?;
         let launcher = RemoteLauncher::layered(hops);
-        return handle_remote_switch(session, launcher, args.cwd).await;
+        return handle_remote_switch(session, turn, launcher, args.cwd).await;
     }
 
     // --- Priority 3: legacy single-hop `target` parameter -------------------
@@ -214,7 +238,12 @@ async fn handle_env_switch(
                     "env_switch: `container` is required when target is `docker`".to_string(),
                 )
             })?;
-            handle_remote_switch(session, RemoteLauncher::docker(container), args.cwd).await
+            validate_hop_value(&container).map_err(|e| {
+                FunctionCallError::RespondToModel(format!(
+                    "env_switch: invalid `container` value: {e}"
+                ))
+            })?;
+            handle_remote_switch(session, turn, RemoteLauncher::docker(container), args.cwd).await
         }
         "ssh" => {
             let host = args.host.ok_or_else(|| {
@@ -222,7 +251,10 @@ async fn handle_env_switch(
                     "env_switch: `host` is required when target is `ssh`".to_string(),
                 )
             })?;
-            handle_remote_switch(session, RemoteLauncher::ssh(host), args.cwd).await
+            validate_hop_value(&host).map_err(|e| {
+                FunctionCallError::RespondToModel(format!("env_switch: invalid `host` value: {e}"))
+            })?;
+            handle_remote_switch(session, turn, RemoteLauncher::ssh(host), args.cwd).await
         }
         other => Err(FunctionCallError::RespondToModel(format!(
             "env_switch: unsupported target `{other}`; valid values are `local`, `docker`, `ssh`, \
@@ -250,11 +282,62 @@ fn handle_local_switch(
     )))
 }
 
+/// Derives the exec-server sandbox and approval policy flags to pass to the
+/// remote codex process from the current turn's configuration.
+///
+/// The remote exec-server is started with the host session's sandbox mode and
+/// approval policy so that the security posture is inherited rather than
+/// hard-coded.  Mapping:
+///
+/// - `PermissionProfile::Disabled` → `sandbox_mode=danger-full-access`
+/// - `PermissionProfile::Managed` with full disk write → `sandbox_mode=danger-full-access`
+/// - otherwise → `sandbox_mode=workspace-write` (best available on the remote)
+///
+/// For the approval policy we use the turn's `approval_policy` value.
+/// `AskForApproval::Never` → `approval_policy=never` (auto-approve).
+/// Any other value → `approval_policy=on-failure` (prompt on failure, safest
+/// remote default that does not require an interactive terminal on the remote).
+///
+/// Note: the remote exec-server runs inside a container/SSH hop that is already
+/// controlled by the model.  Using the host's sandbox mode here prevents the
+/// remote from accidentally getting a *more permissive* policy than the host
+/// session.
+fn derive_exec_server_policy_flags(turn: &TurnContext) -> Vec<String> {
+    use codex_protocol::models::PermissionProfile;
+    use codex_protocol::protocol::AskForApproval;
+
+    let sandbox_tag = match &turn.permission_profile {
+        PermissionProfile::Disabled => "danger-full-access",
+        PermissionProfile::External { .. } => "danger-full-access",
+        PermissionProfile::Managed { .. } => {
+            let fsp = turn.permission_profile.file_system_sandbox_policy();
+            if fsp.has_full_disk_write_access() {
+                "danger-full-access"
+            } else {
+                "workspace-write"
+            }
+        }
+    };
+
+    let approval_tag = match turn.approval_policy.value() {
+        AskForApproval::Never => "never",
+        _ => "on-failure",
+    };
+
+    vec![
+        "-c".to_string(),
+        format!("sandbox_mode={sandbox_tag}"),
+        "-c".to_string(),
+        format!("approval_policy={approval_tag}"),
+    ]
+}
+
 /// Provisions the remote codex exec-server and registers it as a named
 /// environment.  Returns a message instructing the model to pass
 /// `environment_id` on subsequent tool calls.
 async fn handle_remote_switch(
     session: &Arc<Session>,
+    turn: &Arc<TurnContext>,
     launcher: RemoteLauncher,
     explicit_cwd: Option<String>,
 ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
@@ -269,6 +352,7 @@ async fn handle_remote_switch(
 
     let codex_path = provisioned.codex_path.clone();
     let deployed_version = provisioned.version.clone();
+    let provision_warning = provisioned.warning.clone();
 
     // --- Step 2: determine effective cwd and ensure it exists --------------------
     let remote_cwd: String = if let Some(cwd) = explicit_cwd {
@@ -292,20 +376,47 @@ async fn handle_remote_switch(
         }
     };
 
-    // --- Step 3: build the environment id and register the stdio environment ----
+    // --- Step 3: build the environment id -----------------------------------------
     let environment_id = launcher.id();
-    let target_label = environment_id.clone();
 
-    let exec_server_inner = vec![
-        codex_path.clone(),
-        "exec-server".to_string(),
-        "--listen".to_string(),
-        "stdio".to_string(),
-        "-c".to_string(),
-        "sandbox_mode=danger-full-access".to_string(),
-        "-c".to_string(),
-        "approval_policy=never".to_string(),
-    ];
+    // --- Step 4: record metadata BEFORE registering the environment ---------------
+    // Recording metadata first closes the window where a concurrent exec_command
+    // could observe an environment that exists in the registry but has no cwd/shell.
+    let abs_cwd = AbsolutePathBuf::from_absolute_path_checked(&remote_cwd).map_err(|e| {
+        FunctionCallError::RespondToModel(format!(
+            "env_switch: remote cwd `{remote_cwd}` is not an absolute path: {e}"
+        ))
+    })?;
+    let _ = abs_cwd; // stored as string in EnvironmentMetadata; AbsolutePathBuf validates it
+    session
+        .services
+        .environment_manager
+        .set_environment_metadata(
+            environment_id.clone(),
+            EnvironmentMetadata {
+                cwd: remote_cwd.clone(),
+                shell: provisioned.shell.clone(),
+            },
+        );
+
+    // Record the launcher in the shared registry so sub-agents and relative-mode
+    // calls on this thread can find the most-recently-activated launcher.
+    let thread_key = session.thread_id.to_string();
+    session
+        .services
+        .environment_manager
+        .set_last_launcher(thread_key, launcher.clone());
+
+    // --- Step 5: register the stdio environment in the EnvironmentManager ----------
+    let policy_flags = derive_exec_server_policy_flags(turn);
+    let exec_server_inner = std::iter::once(codex_path.clone())
+        .chain([
+            "exec-server".to_string(),
+            "--listen".to_string(),
+            "stdio".to_string(),
+        ])
+        .chain(policy_flags)
+        .collect::<Vec<_>>();
     let exec_argv = launcher.exec_argv(exec_server_inner);
     let (program, args) = exec_argv
         .split_first()
@@ -330,46 +441,28 @@ async fn handle_remote_switch(
             ))
         })?;
 
-    // --- Step 4: record the remote cwd so resolve_tool_environment can use it ---
-    let abs_cwd = AbsolutePathBuf::from_absolute_path_checked(&remote_cwd).map_err(|e| {
-        FunctionCallError::RespondToModel(format!(
-            "env_switch: remote cwd `{remote_cwd}` is not an absolute path: {e}"
-        ))
-    })?;
-    {
-        let mut cwds = session.services.dynamic_environment_cwds.lock().await;
-        cwds.insert(environment_id.clone(), abs_cwd);
-    }
-
-    // --- Step 4c: record the remote shell so resolve_tool_environment can wire it ---
-    if let Some(remote_shell) = provisioned.shell.clone() {
-        let mut shells = session.services.dynamic_environment_shells.lock().await;
-        shells.insert(environment_id.clone(), remote_shell);
-    }
-
-    // --- Step 4b: update per-thread last-launcher cursor (relative mode base) ---
-    {
-        let mut cursors = session.services.last_remote_launcher.lock().await;
-        cursors.insert(session.thread_id, launcher.clone());
-    }
-
-    // --- Step 5: emit a ThreadSettingsApplied badge event (non-sticky) -----------
-    // We re-use the existing badge mechanism to surface the active remote env in
-    // the TUI.  We emit a badge showing the new environment id without changing
-    // the thread's sticky environment selection (so future turns still default
-    // to the local host unless the model explicitly passes environment_id).
+    // --- Step 6: emit a display-only badge event ---------------------------------
+    // Shows the most recently provisioned remote environment in the TUI.
+    // This is a display-only badge; it does not change the thread's sticky
+    // environment selection (future turns still default to the local host
+    // unless the model explicitly passes environment_id).
     session
         .emit_dynamic_environment_badge(&environment_id)
         .await;
 
-    // --- Step 6: return instructive message to the model -------------------------
+    // --- Step 7: return instructive message to the model -------------------------
+    let warning_suffix = match &provision_warning {
+        Some(w) => format!("\nWARNING: {w}"),
+        None => String::new(),
+    };
     let message = format!(
         "env_switch complete: environment `{environment_id}` is ready \
-         ({target_label}, codex {deployed_version} at {codex_path}, cwd={remote_cwd}). \
+         (codex {deployed_version} at {codex_path}, cwd={remote_cwd}). \
          To run commands inside this environment, pass `\"environment_id\": \"{environment_id}\"` \
          to shell_command / exec_command / apply_patch / view_image. \
          Omitting environment_id continues to execute on the local host. \
-         Do NOT call env_switch again for the same target unless you want to re-provision."
+         Do NOT call env_switch again for the same target unless you want to re-provision.\
+         {warning_suffix}"
     );
     Ok(boxed_tool_output(FunctionToolOutput::from_text(
         message,
