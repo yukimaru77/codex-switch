@@ -37,6 +37,7 @@ mod view_image;
 pub(crate) mod view_image_spec;
 mod wait_for_environment;
 
+use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_sandboxing::policy_transforms::intersect_permission_profiles;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use codex_sandboxing::policy_transforms::normalize_additional_permissions;
@@ -159,16 +160,22 @@ fn resolve_workdir_base_path(
 /// Resolve the environment to use for a tool call.
 ///
 /// Resolution order:
-/// 1. `environment_id` is `None` → return the primary turn environment (borrowed from `turn`).
-/// 2. `environment_id` is `Some(id)` and `id` is in `turn.environments.turn_environments` →
-///    clone and return it (same as before).
-/// 3. `environment_id` is `Some(id)`, not in `turn` but present in the live
-///    `EnvironmentManager` → synthesize a `TurnEnvironment` using the cwd recorded in
-///    `session.services.dynamic_environment_cwds` (or fall back to the primary cwd / "/").
-/// 4. Otherwise → "unknown turn environment id" error.
+/// 1. `environment_id` is `None` → return the primary turn environment.
+/// 2. `environment_id` is `Some(LOCAL_ENVIRONMENT_ID)` → return the primary
+///    local environment (special-cased so callers can always route to the host
+///    even when `local` is not in the frozen turn list).
+/// 3. `environment_id` is `Some(id)` and `id` is in `turn.environments.turn_environments` →
+///    clone and return it.
+/// 4. `environment_id` is `Some(id)`, not in `turn` but present in the live
+///    `EnvironmentManager` → synthesize a `TurnEnvironment` using the cwd and
+///    shell recorded in `EnvironmentManager::get_environment_metadata`.
+///    If metadata was not recorded (should not happen in normal operation), the
+///    cwd falls back to `/` — *not* the host primary cwd — to avoid silently
+///    running remote commands in a host path that does not exist remotely.
+/// 5. Otherwise → "unknown turn environment id" error.
 ///
-/// The function now returns an owned `TurnEnvironment` rather than a borrow because synthesized
-/// values in case 3 have no backing storage in `turn`.
+/// Returns an owned `TurnEnvironment` because synthesised values in case 4
+/// have no backing storage in `turn`.
 pub(crate) async fn resolve_tool_environment(
     session: &Session,
     turn: &TurnContext,
@@ -177,6 +184,12 @@ pub(crate) async fn resolve_tool_environment(
     let Some(env_id) = environment_id else {
         return Ok(turn.environments.primary().cloned());
     };
+
+    // Special case: "local" always resolves to the primary local environment
+    // regardless of whether it is present in the frozen turn list.
+    if env_id == LOCAL_ENVIRONMENT_ID {
+        return Ok(turn.environments.primary().cloned());
+    }
 
     // Fast path: id already in the frozen turn list.
     if let Some(found) = turn
@@ -190,30 +203,34 @@ pub(crate) async fn resolve_tool_environment(
     // Live fallback: look up through EnvironmentManager (for dynamically
     // registered environments, e.g. registered by env_switch in the same turn).
     if let Some(environment) = session.services.environment_manager.get_environment(env_id) {
-        let cwd = {
-            let cwds = session.services.dynamic_environment_cwds.lock().await;
-            cwds.get(env_id).cloned()
-        }
-        .or_else(|| {
-            turn.environments
-                .primary()
-                .and_then(|primary| primary.cwd().to_abs_path())
-        })
-        .unwrap_or_else(|| {
-            AbsolutePathBuf::from_absolute_path(std::path::Path::new("/"))
-                .expect("/ is always absolute")
-        });
+        // Retrieve cwd/shell from the shared EnvironmentManager metadata map.
+        // Metadata is populated by env_switch *before* the environment is
+        // registered, so it is available as soon as get_environment() succeeds.
+        let (cwd, shell) = if let Some(meta) = session
+            .services
+            .environment_manager
+            .get_environment_metadata(env_id)
+        {
+            let cwd = AbsolutePathBuf::from_absolute_path_checked(&meta.cwd).unwrap_or_else(|_| {
+                AbsolutePathBuf::from_absolute_path(std::path::Path::new("/"))
+                    .expect("/ is always absolute")
+            });
+            let shell = meta.shell.map(|shell_path| {
+                crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell_path))
+            });
+            (cwd, shell)
+        } else {
+            // Metadata missing: fall back to "/" on the remote side.
+            // Using the host primary cwd here would be wrong because that path
+            // likely does not exist on the remote host (ENOENT).
+            let cwd = AbsolutePathBuf::from_absolute_path(std::path::Path::new("/"))
+                .expect("/ is always absolute");
+            (cwd, None)
+        };
         let workspace_roots = turn
             .environments
             .primary()
             .map_or_else(Vec::new, |primary| primary.workspace_roots().to_vec());
-        let shell = {
-            let shells = session.services.dynamic_environment_shells.lock().await;
-            shells.get(env_id).cloned()
-        }
-        .map(|shell_path| {
-            crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell_path))
-        });
         return Ok(Some(TurnEnvironment::new(
             env_id.to_string(),
             environment,

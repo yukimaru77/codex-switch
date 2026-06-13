@@ -1,9 +1,18 @@
 //! Version policy for remote codex provisioning.
+//!
+//! # Follow-up: deduplication of GitHub release fetching
+//!
+//! The `resolve_latest_version` function here duplicates the GitHub
+//! `releases/latest` fetch logic found in `codex-rs/cli/src/doctor/updates.rs`
+//! and `codex-rs/tui/src/updates.rs`.  Unifying these into a shared crate
+//! (e.g. `codex-updates`) is left as a follow-up to keep this PR's diff small.
 
 use codex_client::build_reqwest_client_with_custom_ca;
+use reqwest::StatusCode;
 use serde::Deserialize;
 
 use crate::provision::error::ProvisionError;
+use crate::provision::install::normalize_version;
 
 /// Determines which version of codex to provision on the remote host.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,7 +38,7 @@ impl VersionPolicy {
     /// `Latest` always re-checks, since the whole point is to pull the newest.
     pub fn is_satisfied_by_existing(&self, existing: &str) -> bool {
         match self {
-            VersionPolicy::Exact(v) => existing == v,
+            VersionPolicy::Exact(v) => normalize_version(existing) == normalize_version(v),
             VersionPolicy::HostVersion => {
                 let host_version = env!("CARGO_PKG_VERSION");
                 if is_dev_version(host_version) {
@@ -37,7 +46,7 @@ impl VersionPolicy {
                     // existing remote codex instead of resolving Latest.
                     true
                 } else {
-                    existing == host_version
+                    normalize_version(existing) == normalize_version(host_version)
                 }
             }
             VersionPolicy::Latest => false,
@@ -87,6 +96,9 @@ struct GitHubRelease {
 ///
 /// Uses the shared workspace HTTP client so `CODEX_CA_CERTIFICATE` and proxy
 /// settings are inherited automatically.
+///
+/// HTTP 403/429 (rate limit) and 404 (release not found) are returned as
+/// dedicated [`ProvisionError`] variants with actionable messages.
 pub(crate) async fn resolve_latest_version() -> Result<String, ProvisionError> {
     let client = build_reqwest_client_with_custom_ca(
         reqwest::Client::builder().user_agent("codex-exec-server"),
@@ -98,7 +110,14 @@ pub(crate) async fn resolve_latest_version() -> Result<String, ProvisionError> {
     if let Some(token) = github_token() {
         request = request.bearer_auth(token);
     }
-    let json = request.send().await?.error_for_status()?.text().await?;
+    let response = request.send().await?;
+    let status = response.status();
+    if status == StatusCode::FORBIDDEN || status == StatusCode::TOO_MANY_REQUESTS {
+        return Err(ProvisionError::GitHubRateLimit {
+            status: status.as_u16(),
+        });
+    }
+    let json = response.error_for_status()?.text().await?;
 
     parse_latest_tag_name(&json)
 }
