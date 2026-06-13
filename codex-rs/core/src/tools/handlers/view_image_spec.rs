@@ -32,7 +32,9 @@ pub fn create_view_image_tool(options: ViewImageToolOptions) -> ToolSpec {
         properties.insert(
             "environment_id".to_string(),
             JsonSchema::string(Some(
-                "Environment id from <environment_context>. Omit to use the primary environment."
+                "Read the image from a specific execution target: pass an `environment_id` \
+                 returned by the env_switch tool (e.g. `docker:foo` or `ssh:dgx>docker:c`) to \
+                 read inside that container/host. Omit it to read from the local host."
                     .to_string(),
             )),
         );
