@@ -17,6 +17,11 @@ use crate::NoiseChannelPublicKey;
 pub(crate) const DEFAULT_REMOTE_EXEC_SERVER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const DEFAULT_REMOTE_EXEC_SERVER_INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Longer initialize timeout for dynamically provisioned remote stdio
+/// environments (SSH, Docker) where the first startup includes JIT compilation
+/// and process spawning overhead that can exceed the default 10 s.
+pub const PROVISIONED_STDIO_INITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Connection options for any exec-server client transport.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecServerClientConnectOptions {
