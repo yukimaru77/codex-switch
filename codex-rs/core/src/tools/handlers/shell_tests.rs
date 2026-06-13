@@ -104,6 +104,7 @@ async fn shell_command_handler_to_exec_params_uses_session_shell_and_turn_contex
         &turn_context,
         session.thread_id,
         /*allow_login_shell*/ true,
+        /*environment_shell*/ None,
     )
     .expect("login shells should be allowed");
 
@@ -166,6 +167,7 @@ async fn shell_command_handler_defaults_to_non_login_when_disallowed() {
         &turn_context,
         session.thread_id,
         /*allow_login_shell*/ false,
+        /*environment_shell*/ None,
     )
     .expect("non-login shells should still be allowed");
 
