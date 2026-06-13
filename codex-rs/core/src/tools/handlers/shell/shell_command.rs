@@ -94,16 +94,35 @@ impl ShellCommandHandler {
         shell.derive_exec_args(command, use_login_shell)
     }
 
+    /// When `environment_shell` is `Some(path)`, that shell is used to wrap the
+    /// command (e.g. `/bin/sh` on an Alpine remote).  `session.user_shell()` is
+    /// only the fallback when `environment_shell` is `None`.
     pub(super) fn to_exec_params(
         params: &ShellCommandToolCallParams,
         session: &crate::session::session::Session,
         turn_context: &TurnContext,
         thread_id: ThreadId,
         allow_login_shell: bool,
+        environment_shell: Option<&str>,
     ) -> Result<ExecParams, FunctionCallError> {
-        let shell = session.user_shell();
+        let owned_env_shell;
+        let shell: &Shell = if let Some(shell_path) = environment_shell {
+            owned_env_shell = crate::shell::get_shell_by_model_provided_path(
+                &std::path::PathBuf::from(shell_path),
+            );
+            &owned_env_shell
+        } else {
+            // SAFETY: Arc<Shell> lives for the duration of this call; the
+            // reference is only used within this function.
+            // We bind the Arc to a local so the temporary is not dropped early.
+            let arc_shell = session.user_shell();
+            // We need a reference with the same lifetime as `owned_env_shell`
+            // above, but the Arc is local.  Clone the Shell instead.
+            owned_env_shell = (*arc_shell).clone();
+            &owned_env_shell
+        };
         let use_login_shell = Self::resolve_use_login_shell(params.login, allow_login_shell)?;
-        let command = Self::base_command(shell.as_ref(), &params.command, use_login_shell);
+        let command = Self::base_command(shell, &params.command, use_login_shell);
         #[allow(deprecated)]
         let cwd = turn_context.resolve_path(params.workdir.clone());
 
@@ -216,17 +235,33 @@ impl ShellCommandHandler {
         )
         .await;
         let prefix_rule = params.prefix_rule.clone();
+        // Use the shell reported by the remote probe when the resolved
+        // environment carries one; fall back to the session's local user shell.
+        let env_shell = resolved_environment
+            .as_ref()
+            .and_then(|e| e.shell.as_deref());
         let mut exec_params = Self::to_exec_params(
             &params,
             session.as_ref(),
             turn.as_ref(),
             session.thread_id,
             turn.config.permissions.allow_login_shell,
+            env_shell,
         )?;
         // Override cwd with the resolved environment's working directory so
         // that shell commands are launched in the correct remote directory.
         exec_params.cwd = workdir.clone();
-        let shell_type = Some(session.user_shell().shell_type);
+        // Derive the shell type for hook metadata from the effective shell.
+        let shell_type = if let Some(shell_path) = env_shell {
+            Some(
+                crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(
+                    shell_path,
+                ))
+                .shell_type,
+            )
+        } else {
+            Some(session.user_shell().shell_type)
+        };
         run_exec_like(RunExecLikeArgs {
             tool_name,
             exec_params,

@@ -17,6 +17,7 @@ fn parse_probe_with_existing_codex() {
                 "/home/user/.codex/bin/codex".to_string(),
                 "1.2.3".to_string(),
             )),
+            shell: None,
         }
     );
 }
@@ -31,6 +32,7 @@ fn parse_probe_without_existing_codex() {
             arch: "aarch64".to_string(),
             home: "/root".to_string(),
             existing: None,
+            shell: None,
         }
     );
 }
@@ -48,6 +50,7 @@ fn parse_probe_darwin() {
                 "/Users/alice/.codex/bin/codex".to_string(),
                 "0.9.1".to_string(),
             )),
+            shell: None,
         }
     );
 }
@@ -77,4 +80,28 @@ fn parse_probe_path_without_version_yields_no_existing() {
     let output = "Linux\nx86_64\n/home/ci\nCODEX_PATH:/usr/local/bin/codex\n";
     let probe = parse_probe_output(output).unwrap();
     assert!(probe.existing.is_none());
+}
+
+#[test]
+fn parse_probe_with_codex_shell() {
+    let output = "Linux\nx86_64\n/home/user\nCODEX_PATH:/home/user/.codex/bin/codex\nCODEX_VERSION:1.2.3\nCODEX_SHELL:/bin/bash\n";
+    let probe = parse_probe_output(output).unwrap();
+    assert_eq!(probe.shell, Some("/bin/bash".to_string()));
+    assert_eq!(probe.os, "Linux");
+}
+
+#[test]
+fn parse_probe_with_sh_fallback_shell() {
+    let output = "Linux\nx86_64\n/root\nCODEX_SHELL:/bin/sh\n";
+    let probe = parse_probe_output(output).unwrap();
+    assert_eq!(probe.shell, Some("/bin/sh".to_string()));
+    assert!(probe.existing.is_none());
+}
+
+#[test]
+fn parse_probe_without_shell_line() {
+    // Older probe output without CODEX_SHELL: shell field is None.
+    let output = "Linux\naarch64\n/root\n";
+    let probe = parse_probe_output(output).unwrap();
+    assert_eq!(probe.shell, None);
 }
