@@ -37,6 +37,10 @@ pub struct ProvisionedCodex {
     /// Optional warning produced when install failed but an existing binary
     /// could be used as a fallback.
     pub warning: Option<String>,
+    /// Path to the preferred shell on the remote host, as detected by the
+    /// probe script (`CODEX_SHELL:` line).  `None` when the remote probe did
+    /// not emit a shell line (very old environments or exotic configurations).
+    pub shell: Option<String>,
 }
 
 /// The standard installation symlink path relative to `$HOME`.
@@ -67,6 +71,7 @@ pub async fn ensure_remote_codex(
 ) -> Result<ProvisionedCodex, ProvisionError> {
     let probe_result = probe(launcher).await?;
     let triple = resolve_triple(&probe_result.os, &probe_result.arch)?;
+    let remote_shell = probe_result.shell.clone();
 
     // Fast path: reuse an existing remote binary when the policy can be
     // satisfied offline, so a routine switch to an already-provisioned remote
@@ -78,6 +83,7 @@ pub async fn ensure_remote_codex(
             codex_path: existing_path.clone(),
             version: existing_version.clone(),
             warning: None,
+            shell: remote_shell,
         });
     }
 
@@ -92,6 +98,7 @@ pub async fn ensure_remote_codex(
             codex_path: existing_path.clone(),
             version: existing_version.clone(),
             warning: None,
+            shell: remote_shell,
         });
     }
 
@@ -109,6 +116,7 @@ pub async fn ensure_remote_codex(
                     warning: Some(format!(
                         "install failed ({install_err}); using existing codex {existing_version}"
                     )),
+                    shell: remote_shell,
                 });
             }
             return Err(install_err);
@@ -128,6 +136,7 @@ pub async fn ensure_remote_codex(
         codex_path,
         version,
         warning: None,
+        shell: remote_shell,
     })
 }
 

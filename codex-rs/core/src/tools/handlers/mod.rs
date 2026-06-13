@@ -201,11 +201,16 @@ pub(crate) async fn resolve_tool_environment(
             AbsolutePathBuf::from_absolute_path(std::path::Path::new("/"))
                 .expect("/ is always absolute")
         });
+        let shell = {
+            let shells = session.services.dynamic_environment_shells.lock().await;
+            shells.get(env_id).cloned()
+        }
+        .map(|shell_path| crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell_path)));
         return Ok(Some(TurnEnvironment {
             environment_id: env_id.to_string(),
             environment,
             cwd,
-            shell: None,
+            shell,
         }));
     }
 
