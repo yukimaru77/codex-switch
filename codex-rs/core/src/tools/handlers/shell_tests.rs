@@ -136,6 +136,7 @@ async fn shell_command_handler_to_exec_params_uses_selected_environment() {
         &selected_environment,
         expected_cwd.clone(),
         /*allow_login_shell*/ true,
+        /*environment_shell*/ None,
     )
     .expect("login shells should be allowed");
 
@@ -217,6 +218,7 @@ async fn shell_command_handler_defaults_to_non_login_when_disallowed() {
         turn_environment,
         cwd,
         /*allow_login_shell*/ false,
+        /*environment_shell*/ None,
     )
     .expect("non-login shells should still be allowed");
 
