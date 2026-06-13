@@ -105,6 +105,12 @@ pub(crate) struct SessionServices {
     /// working directories.  Resolved by `resolve_tool_environment` when the id is not found in
     /// the turn's frozen `turn_environments` list.
     pub(crate) dynamic_environment_cwds: Mutex<HashMap<String, AbsolutePathBuf>>,
+    /// Maps dynamically-registered environment ids to the preferred shell path
+    /// on that remote host, as reported by the probe script (`CODEX_SHELL:`).
+    /// Used by `resolve_tool_environment` to populate `TurnEnvironment.shell`
+    /// so that `shell_command` executes with the correct remote shell from the
+    /// first attempt.
+    pub(crate) dynamic_environment_shells: Mutex<HashMap<String, String>>,
     /// Tracks the most-recently registered [`RemoteLauncher`] per thread.
     ///
     /// Updated every time `env_switch` successfully registers a remote environment.
