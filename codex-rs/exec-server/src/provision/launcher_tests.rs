@@ -2,8 +2,10 @@ use pretty_assertions::assert_eq;
 
 use super::Hop;
 use super::RemoteLauncher;
+use super::SSH_HARDENING_FLAGS;
 use super::posix_single_quote;
 use super::shell_join;
+use super::validate_hop_value;
 
 // --- posix_single_quote --------------------------------------------------
 
@@ -63,6 +65,39 @@ fn shell_join_token_with_metachar() {
     assert_eq!(shell_join(&tokens), r"'sh' '-c' 'echo '\''hi'\'''");
 }
 
+// --- validate_hop_value --------------------------------------------------
+
+#[test]
+fn validate_hop_value_ok_normal_host() {
+    assert!(validate_hop_value("user@host.example.com").is_ok());
+}
+
+#[test]
+fn validate_hop_value_ok_colon_in_value() {
+    // Values may contain `:` (e.g. IPv6 addresses or user:host forms).
+    assert!(validate_hop_value("user:host").is_ok());
+}
+
+#[test]
+fn validate_hop_value_err_empty() {
+    let err = validate_hop_value("").unwrap_err();
+    assert!(err.contains("empty"), "unexpected error: {err}");
+}
+
+#[test]
+fn validate_hop_value_err_leading_dash() {
+    // A leading `-` would be interpreted as an SSH or docker flag.
+    let err = validate_hop_value("-oProxyCommand=touch /tmp/pwned").unwrap_err();
+    assert!(err.contains("start with `-`"), "unexpected error: {err}");
+}
+
+#[test]
+fn validate_hop_value_err_gt_separator() {
+    // `>` is the id segment separator; allowing it would corrupt round-trip.
+    let err = validate_hop_value("host>evil").unwrap_err();
+    assert!(err.contains("`>`"), "unexpected error: {err}");
+}
+
 // --- id ------------------------------------------------------------------
 
 #[test]
@@ -106,15 +141,28 @@ fn id_three_hops() {
     assert_eq!(launcher.id(), "ssh:bastion>ssh:dgx>docker:c");
 }
 
+// --- helper: build the expected SSH prefix for a given host --------------
+
+/// Returns the expected SSH argv prefix including all hardening flags and `--`,
+/// but *without* the final shell-word argument.
+fn ssh_prefix(host: &str) -> Vec<String> {
+    let mut v = vec!["ssh".to_string()];
+    v.extend(SSH_HARDENING_FLAGS.iter().map(|s| s.to_string()));
+    v.push("--".to_string());
+    v.push(host.to_string());
+    v
+}
+
 // --- shell_argv (single-layer, backward-compat) --------------------------
 
 #[test]
 fn docker_shell_argv_passes_script_as_separate_args() {
     let launcher = RemoteLauncher::docker("c1");
     let script = "mkdir -p /tmp/x && echo ok";
+    // Docker argv now includes `--` before the container name.
     assert_eq!(
         launcher.shell_argv(script),
-        vec!["docker", "exec", "-i", "c1", "sh", "-c", script]
+        vec!["docker", "exec", "-i", "--", "c1", "sh", "-c", script]
     );
 }
 
@@ -123,14 +171,15 @@ fn ssh_shell_argv_collapses_to_single_quoted_arg() {
     let launcher = RemoteLauncher::ssh("remote.example");
     let script = "mkdir -p /tmp/x && tar -xzf - -C /tmp/x";
     let argv = launcher.shell_argv(script);
-    // Must be exactly 4 elements: ssh -T <host> <single-shell-word>
-    assert_eq!(argv.len(), 4);
-    assert_eq!(&argv[0], "ssh");
-    assert_eq!(&argv[1], "-T");
-    assert_eq!(&argv[2], "remote.example");
-    // The fourth element must start the remote shell command; the script
-    // must be safely wrapped so no re-splitting occurs.
-    let remote_arg = &argv[3];
+
+    // Expected length: "ssh" + hardening flags + "--" + host + 1 shell-word.
+    // SSH_HARDENING_FLAGS has 8 elements → total = 1 + 8 + 1 + 1 + 1 = 12.
+    let prefix = ssh_prefix("remote.example");
+    assert_eq!(argv.len(), prefix.len() + 1);
+    assert_eq!(&argv[..prefix.len()], prefix.as_slice());
+
+    // The last element must be the safely-quoted shell command.
+    let remote_arg = argv.last().unwrap();
     assert_eq!(
         remote_arg,
         &format!("'sh' '-c' '{script}'"),
@@ -144,9 +193,13 @@ fn ssh_shell_argv_quotes_script_with_single_quote() {
     // Script containing a single-quote must be properly escaped.
     let script = "echo 'hello world'";
     let argv = launcher.shell_argv(script);
-    assert_eq!(argv.len(), 4);
+
+    let prefix = ssh_prefix("h");
+    assert_eq!(argv.len(), prefix.len() + 1);
+    assert_eq!(&argv[..prefix.len()], prefix.as_slice());
+
     // Verify the remote arg contains the escaped form.
-    let remote_arg = &argv[3];
+    let remote_arg = argv.last().unwrap();
     assert!(
         !remote_arg.contains("echo 'hello"),
         "raw single-quote must be escaped, got: {remote_arg}"
@@ -166,12 +219,14 @@ fn docker_exec_argv_no_quoting() {
         "--listen".to_string(),
         "stdio".to_string(),
     ];
+    // Docker argv now includes `--` before the container name.
     assert_eq!(
         launcher.exec_argv(inner),
         vec![
             "docker",
             "exec",
             "-i",
+            "--",
             "c1",
             "codex",
             "exec-server",
@@ -191,11 +246,14 @@ fn ssh_exec_argv_collapses_to_single_quoted_arg() {
         "stdio".to_string(),
     ];
     let argv = launcher.exec_argv(inner);
-    assert_eq!(argv.len(), 4);
-    assert_eq!(&argv[0], "ssh");
-    assert_eq!(&argv[1], "-T");
-    assert_eq!(&argv[2], "h");
-    assert_eq!(&argv[3], "'codex' 'exec-server' '--listen' 'stdio'");
+
+    let prefix = ssh_prefix("h");
+    assert_eq!(argv.len(), prefix.len() + 1);
+    assert_eq!(&argv[..prefix.len()], prefix.as_slice());
+    assert_eq!(
+        argv.last().unwrap(),
+        "'codex' 'exec-server' '--listen' 'stdio'"
+    );
 }
 
 // --- multi-hop: ssh→docker ----------------------------------------------
@@ -204,8 +262,8 @@ fn ssh_exec_argv_collapses_to_single_quoted_arg() {
 fn ssh_docker_exec_argv() {
     // hops = [Ssh{dgx}, Docker{c}], inner = ["codex", "exec-server", "--listen", "stdio"]
     // Expected fold (inner→outer):
-    //   Docker step: ["docker","exec","-i","c","codex","exec-server","--listen","stdio"]
-    //   Ssh step:    ["ssh","-T","dgx", shell_join(above)]
+    //   Docker step: ["docker","exec","-i","--","c","codex","exec-server","--listen","stdio"]
+    //   Ssh step:    ["ssh", <hardening>, "--", "dgx", shell_join(above)]
     let launcher = RemoteLauncher::layered(vec![
         Hop::Ssh {
             host: "dgx".to_string(),
@@ -221,13 +279,13 @@ fn ssh_docker_exec_argv() {
         "stdio".to_string(),
     ];
     let argv = launcher.exec_argv(inner);
-    assert_eq!(argv.len(), 4);
-    assert_eq!(&argv[0], "ssh");
-    assert_eq!(&argv[1], "-T");
-    assert_eq!(&argv[2], "dgx");
+
+    let prefix = ssh_prefix("dgx");
+    assert_eq!(argv.len(), prefix.len() + 1);
+    assert_eq!(&argv[..prefix.len()], prefix.as_slice());
     assert_eq!(
-        &argv[3],
-        "'docker' 'exec' '-i' 'c' 'codex' 'exec-server' '--listen' 'stdio'"
+        argv.last().unwrap(),
+        "'docker' 'exec' '-i' '--' 'c' 'codex' 'exec-server' '--listen' 'stdio'"
     );
 }
 
@@ -235,8 +293,8 @@ fn ssh_docker_exec_argv() {
 fn ssh_docker_shell_argv() {
     // hops = [Ssh{dgx}, Docker{c}], script = "uname -m"
     // inner = ["sh","-c","uname -m"]
-    // Docker step: ["docker","exec","-i","c","sh","-c","uname -m"]
-    // Ssh step: ["ssh","-T","dgx", shell_join(docker_tokens)]
+    // Docker step: ["docker","exec","-i","--","c","sh","-c","uname -m"]
+    // Ssh step: ["ssh", <hardening>, "--", "dgx", shell_join(docker_tokens)]
     let launcher = RemoteLauncher::layered(vec![
         Hop::Ssh {
             host: "dgx".to_string(),
@@ -246,11 +304,14 @@ fn ssh_docker_shell_argv() {
         },
     ]);
     let argv = launcher.shell_argv("uname -m");
-    assert_eq!(argv.len(), 4);
-    assert_eq!(&argv[0], "ssh");
-    assert_eq!(&argv[1], "-T");
-    assert_eq!(&argv[2], "dgx");
-    assert_eq!(&argv[3], "'docker' 'exec' '-i' 'c' 'sh' '-c' 'uname -m'");
+
+    let prefix = ssh_prefix("dgx");
+    assert_eq!(argv.len(), prefix.len() + 1);
+    assert_eq!(&argv[..prefix.len()], prefix.as_slice());
+    assert_eq!(
+        argv.last().unwrap(),
+        "'docker' 'exec' '-i' '--' 'c' 'sh' '-c' 'uname -m'"
+    );
 }
 
 // --- multi-hop: metacharacter neutralization across layers --------------
@@ -270,20 +331,25 @@ fn ssh_docker_shell_argv_script_with_metacharacters() {
     // Script with single-quote, dollar, semicolon.
     let script = "echo 'hi'; echo $USER";
     let argv = launcher.shell_argv(script);
-    assert_eq!(argv.len(), 4);
+
+    let prefix = ssh_prefix("h");
+    assert_eq!(argv.len(), prefix.len() + 1);
+    assert_eq!(&argv[..prefix.len()], prefix.as_slice());
+
     // The entire payload for ssh must be a single token.
     // Docker tokens are individually quoted by shell_join at the Ssh layer.
     // The script token itself is quoted by posix_single_quote, so ' → '\''
-    let remote_arg = &argv[3];
+    let remote_arg = argv.last().unwrap();
     // script = "echo 'hi'; echo $USER"
     // posix_single_quote(script) = "'echo '\''hi'\''; echo $USER'"
     // inner = ["sh", "-c", script]
-    // after Docker prepend: ["docker","exec","-i","c","sh","-c",script]
+    // after Docker prepend: ["docker","exec","-i","--","c","sh","-c",script]
     // shell_join of all those:
-    //   'docker' 'exec' '-i' 'c' 'sh' '-c' '<quoted_script>'
+    //   'docker' 'exec' '-i' '--' 'c' 'sh' '-c' '<quoted_script>'
     let expected_script_quoted = posix_single_quote(script);
-    let expected = format!("'docker' 'exec' '-i' 'c' 'sh' '-c' {expected_script_quoted}");
+    let expected = format!("'docker' 'exec' '-i' '--' 'c' 'sh' '-c' {expected_script_quoted}");
     assert_eq!(remote_arg, &expected);
+
     // The remote_arg must be a single token (no unquoted space at the top
     // level that would split it into multiple shell words when ssh forwards
     // it to the remote login shell).  Verify that it starts with `'docker'`
@@ -382,6 +448,56 @@ fn from_id_error_empty_value() {
     );
 }
 
+// --- from_id: dangerous / malformed values are rejected ------------------
+
+#[test]
+fn from_id_rejects_leading_dash_in_host() {
+    // A host value starting with `-` would be a flag-injection vector.
+    let result = RemoteLauncher::from_id("ssh:-oProxyCommand=touch /tmp/pwned");
+    assert!(
+        result.is_err(),
+        "expected error for leading-dash host, got: {result:?}"
+    );
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("start with `-`"),
+        "error should mention leading dash: {err}"
+    );
+}
+
+#[test]
+fn from_id_rejects_leading_dash_in_container() {
+    // A container value starting with `-` would be a flag-injection vector.
+    let result = RemoteLauncher::from_id("docker:-evil-container");
+    assert!(
+        result.is_err(),
+        "expected error for leading-dash container, got: {result:?}"
+    );
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("start with `-`"),
+        "error should mention leading dash: {err}"
+    );
+}
+
+#[test]
+fn from_id_rejects_gt_in_value() {
+    // A `>` inside a value would corrupt split('>')-based parsing, making it
+    // impossible to safely round-trip.  from_id must reject such strings.
+    // Note: `ssh:host>evil` is actually parsed as two segments by split('>'),
+    // so the value seen for the first segment is just "host" — which is fine.
+    // The dangerous case is a value that itself embeds `>` *after* the colon
+    // without another `>` acting as a separator, e.g. the second segment has
+    // an empty type.  We test validate_hop_value directly for this.
+    let result = validate_hop_value("host>evil");
+    assert!(
+        result.is_err(),
+        "validate_hop_value must reject values containing `>`"
+    );
+    let err = result.unwrap_err();
+    assert!(err.contains("`>`"), "error should mention `>`: {err}");
+}
+
 // --- with_appended_hop ---------------------------------------------------
 
 #[test]
@@ -413,13 +529,12 @@ fn three_hop_ssh_ssh_docker_exec_argv() {
     // inner = ["codex", "exec-server", "--listen", "stdio"]
     //
     // Fold innermost-first:
-    //   1. Docker{c}: ["docker","exec","-i","c","codex","exec-server","--listen","stdio"]
-    //   2. Ssh{dgx}:  ["ssh","-T","dgx", shell_join(step1)]
-    //      step1_joined = "'docker' 'exec' '-i' 'c' 'codex' 'exec-server' '--listen' 'stdio'"
-    //      step2 = ["ssh","-T","dgx", step1_joined]
-    //   3. Ssh{bastion}: ["ssh","-T","bastion", shell_join(step2)]
-    //      step2 as tokens: ["ssh","-T","dgx", step1_joined]
-    //      shell_join(step2) = "'ssh' '-T' 'dgx' '<posix_single_quote(step1_joined)>'"
+    //   1. Docker{c}: ["docker","exec","-i","--","c","codex","exec-server","--listen","stdio"]
+    //   2. Ssh{dgx}:  ["ssh", <hardening>, "--", "dgx", shell_join(step1)]
+    //      step1_joined = "'docker' 'exec' '-i' '--' 'c' 'codex' 'exec-server' '--listen' 'stdio'"
+    //      step2 = ["ssh", <hardening>, "--", "dgx", step1_joined]
+    //   3. Ssh{bastion}: ["ssh", <hardening>, "--", "bastion", shell_join(step2)]
+    //      shell_join(step2) = "'ssh' <quoted hardening flags> '--' 'dgx' '<posix_single_quote(step1_joined)>'"
     let launcher = RemoteLauncher::layered(vec![
         Hop::Ssh {
             host: "bastion".to_string(),
@@ -438,16 +553,17 @@ fn three_hop_ssh_ssh_docker_exec_argv() {
         "stdio".to_string(),
     ];
     let argv = launcher.exec_argv(inner);
-    assert_eq!(argv.len(), 4);
-    assert_eq!(&argv[0], "ssh");
-    assert_eq!(&argv[1], "-T");
-    assert_eq!(&argv[2], "bastion");
+
+    let prefix = ssh_prefix("bastion");
+    assert_eq!(argv.len(), prefix.len() + 1);
+    assert_eq!(&argv[..prefix.len()], prefix.as_slice());
 
     // Compute expected step by step to avoid hard-coding fragile strings.
     let step1_tokens: Vec<String> = vec![
         "docker".to_string(),
         "exec".to_string(),
         "-i".to_string(),
+        "--".to_string(),
         "c".to_string(),
         "codex".to_string(),
         "exec-server".to_string(),
@@ -455,20 +571,18 @@ fn three_hop_ssh_ssh_docker_exec_argv() {
         "stdio".to_string(),
     ];
     let step1_joined = shell_join(&step1_tokens);
-    let step2_tokens = vec![
-        "ssh".to_string(),
-        "-T".to_string(),
-        "dgx".to_string(),
-        step1_joined,
-    ];
+
+    // step2 tokens = ssh_prefix("dgx") + [step1_joined]
+    let mut step2_tokens = ssh_prefix("dgx");
+    step2_tokens.push(step1_joined);
     let expected = shell_join(&step2_tokens);
-    assert_eq!(&argv[3], &expected);
+    assert_eq!(argv.last().unwrap(), &expected);
 
     // Sanity: the expected string must contain double-layer quoting (the
     // step1_joined string itself gets posix_single_quote'd inside step2).
     assert!(
-        argv[3].contains("'ssh'"),
+        argv.last().unwrap().contains("'ssh'"),
         "outer ssh layer must quote inner 'ssh' token: {}",
-        argv[3]
+        argv.last().unwrap()
     );
 }
