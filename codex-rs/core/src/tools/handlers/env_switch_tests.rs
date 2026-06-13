@@ -1,3 +1,5 @@
+use codex_exec_server::EnvironmentManager;
+use codex_exec_server::EnvironmentMetadata;
 use codex_exec_server::provision::Hop;
 use codex_exec_server::provision::RemoteLauncher;
 use codex_exec_server::provision::posix_single_quote;
@@ -8,6 +10,8 @@ use crate::tools::handlers::env_switch_spec::create_env_switch_tool;
 use crate::tools::registry::ToolExecutor;
 
 use super::EnvSwitchHandler;
+use super::HopArg;
+use super::hop_from_arg;
 
 // ---------------------------------------------------------------------------
 // Spec / arg-schema tests
@@ -87,29 +91,45 @@ fn spec_has_all_expected_properties() {
 fn docker_launcher_shell_argv_structure() {
     let launcher = RemoteLauncher::docker("my-container");
     let argv = launcher.shell_argv("echo hello");
-    // Docker: ["docker", "exec", "-i", "<container>", "sh", "-c", "<script>"]
+    // Docker: ["docker", "exec", "-i", "--", "<container>", "sh", "-c", "<script>"]
+    // The "--" end-of-options separator prevents container names that start with
+    // "-" from being misinterpreted as docker flags.
     assert_eq!(argv[0], "docker");
     assert_eq!(argv[1], "exec");
     assert_eq!(argv[2], "-i");
-    assert_eq!(argv[3], "my-container");
-    assert_eq!(argv[4], "sh");
-    assert_eq!(argv[5], "-c");
-    assert_eq!(argv[6], "echo hello");
+    assert_eq!(argv[3], "--");
+    assert_eq!(argv[4], "my-container");
+    assert_eq!(argv[5], "sh");
+    assert_eq!(argv[6], "-c");
+    assert_eq!(argv[7], "echo hello");
 }
 
 #[test]
 fn ssh_launcher_shell_argv_structure() {
     let launcher = RemoteLauncher::ssh("user@remote");
     let argv = launcher.shell_argv("echo hello");
-    // SSH: ["ssh", "-T", "<host>", shell_join(["sh", "-c", "<script>"])]
+    // SSH: ["ssh", "-T", "-q", "-o", "BatchMode=yes", "-o",
+    //       "StrictHostKeyChecking=accept-new", "-o", "LogLevel=ERROR",
+    //       "--", "<host>", shell_join(["sh", "-c", "<script>"])]
+    // The hardening flags suppress password prompts, banners and MOTD.
+    // The "--" separator prevents host names starting with "-" from being
+    // misinterpreted as SSH flags.
     assert_eq!(argv[0], "ssh");
     assert_eq!(argv[1], "-T");
-    assert_eq!(argv[2], "user@remote");
-    // The fourth element contains the quoted shell invocation.
+    assert_eq!(argv[2], "-q");
+    assert_eq!(argv[3], "-o");
+    assert_eq!(argv[4], "BatchMode=yes");
+    assert_eq!(argv[5], "-o");
+    assert_eq!(argv[6], "StrictHostKeyChecking=accept-new");
+    assert_eq!(argv[7], "-o");
+    assert_eq!(argv[8], "LogLevel=ERROR");
+    assert_eq!(argv[9], "--");
+    assert_eq!(argv[10], "user@remote");
+    // The last element contains the quoted shell invocation.
     assert!(
-        argv[3].starts_with("'sh'"),
-        "expected ssh argv[3] to start with `'sh'`, got: {:?}",
-        argv[3]
+        argv[11].starts_with("'sh'"),
+        "expected ssh argv[11] to start with `'sh'`, got: {:?}",
+        argv[11]
     );
 }
 
@@ -270,4 +290,239 @@ fn spec_base_and_extend_are_optional() {
             "`{optional}` should be optional but was found in required: {required:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// hop_from_arg validation tests (#5 — validate_hop_value integration)
+// ---------------------------------------------------------------------------
+
+/// An ssh hop without a `host` field must return a descriptive error.
+#[test]
+fn hop_from_arg_ssh_missing_host_returns_error() {
+    let arg = HopArg {
+        hop_type: "ssh".to_string(),
+        host: None,
+        container: None,
+    };
+    let err = hop_from_arg(arg).expect_err("should fail: no host");
+    match err {
+        crate::function_tool::FunctionCallError::RespondToModel(msg) => {
+            assert!(
+                msg.contains("requires a `host` field"),
+                "expected missing-host message, got: {msg}"
+            );
+        }
+        other => panic!("expected RespondToModel, got {other:?}"),
+    }
+}
+
+/// A docker hop without a `container` field must return a descriptive error.
+#[test]
+fn hop_from_arg_docker_missing_container_returns_error() {
+    let arg = HopArg {
+        hop_type: "docker".to_string(),
+        host: None,
+        container: None,
+    };
+    let err = hop_from_arg(arg).expect_err("should fail: no container");
+    match err {
+        crate::function_tool::FunctionCallError::RespondToModel(msg) => {
+            assert!(
+                msg.contains("requires a `container` field"),
+                "expected missing-container message, got: {msg}"
+            );
+        }
+        other => panic!("expected RespondToModel, got {other:?}"),
+    }
+}
+
+/// An unknown hop type must produce an error listing the valid types.
+#[test]
+fn hop_from_arg_unknown_type_returns_error() {
+    let arg = HopArg {
+        hop_type: "kubernetes".to_string(),
+        host: None,
+        container: None,
+    };
+    let err = hop_from_arg(arg).expect_err("should fail: unknown type");
+    match err {
+        crate::function_tool::FunctionCallError::RespondToModel(msg) => {
+            assert!(
+                msg.contains("unknown hop type"),
+                "expected unknown-type message, got: {msg}"
+            );
+            // The error must name the valid types so the model can self-correct.
+            assert!(msg.contains("ssh"), "must mention ssh");
+            assert!(msg.contains("docker"), "must mention docker");
+        }
+        other => panic!("expected RespondToModel, got {other:?}"),
+    }
+}
+
+/// A hop value that starts with `-` must be rejected (reserved as a CLI flag).
+#[test]
+fn hop_from_arg_ssh_flag_prefix_rejected() {
+    let arg = HopArg {
+        hop_type: "ssh".to_string(),
+        host: Some("-e /etc/passwd".to_string()),
+        container: None,
+    };
+    let err = hop_from_arg(arg).expect_err("should fail: flag-like host");
+    match err {
+        crate::function_tool::FunctionCallError::RespondToModel(msg) => {
+            assert!(
+                msg.contains("must not start with `-`"),
+                "expected flag-rejection message, got: {msg}"
+            );
+        }
+        other => panic!("expected RespondToModel, got {other:?}"),
+    }
+}
+
+/// A hop value that contains `>` (the id segment separator) must be rejected.
+#[test]
+fn hop_from_arg_docker_greater_than_rejected() {
+    let arg = HopArg {
+        hop_type: "docker".to_string(),
+        host: None,
+        container: Some("a>b".to_string()),
+    };
+    let err = hop_from_arg(arg).expect_err("should fail: `>` in container name");
+    match err {
+        crate::function_tool::FunctionCallError::RespondToModel(msg) => {
+            assert!(
+                msg.contains("must not contain `>`"),
+                "expected separator-rejection message, got: {msg}"
+            );
+        }
+        other => panic!("expected RespondToModel, got {other:?}"),
+    }
+}
+
+/// A valid ssh hop must produce the expected `Hop::Ssh` value.
+#[test]
+fn hop_from_arg_valid_ssh_succeeds() {
+    let arg = HopArg {
+        hop_type: "ssh".to_string(),
+        host: Some("user@remote".to_string()),
+        container: None,
+    };
+    let hop = hop_from_arg(arg).expect("valid ssh hop");
+    assert_eq!(
+        hop,
+        Hop::Ssh {
+            host: "user@remote".to_string()
+        }
+    );
+}
+
+/// A valid docker hop must produce the expected `Hop::Docker` value.
+#[test]
+fn hop_from_arg_valid_docker_succeeds() {
+    let arg = HopArg {
+        hop_type: "docker".to_string(),
+        host: None,
+        container: Some("my-container".to_string()),
+    };
+    let hop = hop_from_arg(arg).expect("valid docker hop");
+    assert_eq!(
+        hop,
+        Hop::Docker {
+            container: "my-container".to_string()
+        }
+    );
+}
+
+// ---------------------------------------------------------------------------
+// EnvironmentManager metadata tests (#1 — shared metadata)
+// ---------------------------------------------------------------------------
+
+/// set_environment_metadata followed by get_environment_metadata round-trips
+/// the cwd and shell values correctly.
+#[test]
+fn environment_manager_metadata_roundtrip() {
+    let manager = EnvironmentManager::without_environments();
+    manager.set_environment_metadata(
+        "ssh:myhost".to_string(),
+        EnvironmentMetadata {
+            cwd: "/remote/home".to_string(),
+            shell: Some("/bin/bash".to_string()),
+        },
+    );
+
+    let meta = manager
+        .get_environment_metadata("ssh:myhost")
+        .expect("metadata must be present");
+    assert_eq!(meta.cwd, "/remote/home");
+    assert_eq!(meta.shell.as_deref(), Some("/bin/bash"));
+}
+
+/// get_environment_metadata returns None for an unknown id.
+#[test]
+fn environment_manager_metadata_missing_returns_none() {
+    let manager = EnvironmentManager::without_environments();
+    assert!(manager.get_environment_metadata("ssh:unknown").is_none());
+}
+
+/// set_environment_metadata with shell=None round-trips correctly.
+#[test]
+fn environment_manager_metadata_no_shell() {
+    let manager = EnvironmentManager::without_environments();
+    manager.set_environment_metadata(
+        "docker:c".to_string(),
+        EnvironmentMetadata {
+            cwd: "/workspace".to_string(),
+            shell: None,
+        },
+    );
+    let meta = manager
+        .get_environment_metadata("docker:c")
+        .expect("metadata must be present");
+    assert_eq!(meta.cwd, "/workspace");
+    assert!(meta.shell.is_none());
+}
+
+/// set_last_launcher / get_last_launcher round-trip correctly.
+#[test]
+fn environment_manager_last_launcher_roundtrip() {
+    let manager = EnvironmentManager::without_environments();
+    let launcher = RemoteLauncher::ssh("myhost");
+    manager.set_last_launcher("thread-123".to_string(), launcher.clone());
+
+    let retrieved = manager
+        .get_last_launcher("thread-123")
+        .expect("launcher must be present");
+    assert_eq!(retrieved, launcher);
+}
+
+/// get_last_launcher returns None for an unknown thread key.
+#[test]
+fn environment_manager_last_launcher_missing_returns_none() {
+    let manager = EnvironmentManager::without_environments();
+    assert!(manager.get_last_launcher("nonexistent-thread").is_none());
+}
+
+/// Overwriting metadata for the same id updates the stored value.
+#[test]
+fn environment_manager_metadata_overwrite() {
+    let manager = EnvironmentManager::without_environments();
+    manager.set_environment_metadata(
+        "ssh:host".to_string(),
+        EnvironmentMetadata {
+            cwd: "/old".to_string(),
+            shell: None,
+        },
+    );
+    manager.set_environment_metadata(
+        "ssh:host".to_string(),
+        EnvironmentMetadata {
+            cwd: "/new".to_string(),
+            shell: Some("/bin/zsh".to_string()),
+        },
+    );
+    let meta = manager
+        .get_environment_metadata("ssh:host")
+        .expect("metadata must be present");
+    assert_eq!(meta.cwd, "/new");
+    assert_eq!(meta.shell.as_deref(), Some("/bin/zsh"));
 }

@@ -1,12 +1,16 @@
 //! Core provisioning logic: download, verify, stream and install codex remotely.
 
-use std::fmt::Write;
+use std::fmt::Write as FmtWrite;
 use std::process::Stdio;
 use std::time::Duration;
 
 use codex_client::build_reqwest_client_with_custom_ca;
+use futures::StreamExt;
+use reqwest::StatusCode;
 use sha2::Digest;
 use sha2::Sha256;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -17,6 +21,7 @@ use crate::provision::VersionPolicy;
 use crate::provision::launcher::posix_single_quote;
 use crate::provision::probe::probe;
 use crate::provision::triple::resolve_triple;
+use crate::provision::version::is_dev_version;
 
 /// Timeout for the version-verification command (short – same as probe).
 const VERIFY_TIMEOUT_SECS: u64 = 20;
@@ -60,8 +65,9 @@ const RELEASES_BASE: &str = "https://github.com/openai/codex/releases/download";
 /// 3. Otherwise resolve the concrete target version (may hit the GitHub API),
 ///    and reuse again if it now matches.
 /// 4. Otherwise download `codex-package-<triple>.tar.gz` and
-///    `codex-package_SHA256SUMS` on the **host**, verify the SHA-256, then
-///    stream the archive into the remote via the launcher's stdin.
+///    `codex-package_SHA256SUMS` on the **host** into a temporary file,
+///    verify the SHA-256, then stream the archive into the remote via the
+///    launcher's stdin.
 /// 5. Verify the installed binary reports the expected version.
 /// 6. On download failure, fall back to the existing binary (if any) with a
 ///    warning.
@@ -79,6 +85,18 @@ pub async fn ensure_remote_codex(
     if let Some((existing_path, existing_version)) = &probe_result.existing
         && desired.is_satisfied_by_existing(existing_version)
     {
+        // When the host is a dev build, the policy accepts any existing remote
+        // binary.  Warn about potential protocol incompatibility so the caller
+        // can surface this to the user.
+        if matches!(desired, VersionPolicy::HostVersion)
+            && is_dev_version(env!("CARGO_PKG_VERSION"))
+        {
+            tracing::warn!(
+                existing_version,
+                "reusing remote codex {existing_version} from a dev host build; \
+                 protocol versions may be incompatible"
+            );
+        }
         return Ok(ProvisionedCodex {
             codex_path: existing_path.clone(),
             version: existing_version.clone(),
@@ -91,8 +109,10 @@ pub async fn ensure_remote_codex(
     let version = desired.resolve().await?;
 
     // The resolved version may still match what is already installed.
+    // Normalize both sides: trim whitespace and strip a leading 'v' so that
+    // "v1.2.3" and "1.2.3" are treated as equal (avoids unnecessary re-downloads).
     if let Some((existing_path, existing_version)) = &probe_result.existing
-        && *existing_version == version
+        && normalize_version(existing_version) == normalize_version(&version)
     {
         return Ok(ProvisionedCodex {
             codex_path: existing_path.clone(),
@@ -140,8 +160,13 @@ pub async fn ensure_remote_codex(
     })
 }
 
-/// Downloads the package archive and SHA256SUMS on the host, verifies the
-/// digest, then streams the archive into the remote via stdin.
+/// Downloads the package archive and SHA256SUMS on the host into a temporary
+/// file, verifies the SHA-256 digest, then streams the archive into the remote
+/// via stdin.
+///
+/// Using a temporary file keeps memory usage O(1) (no full-buffer in RAM) and
+/// is safer than piping an unverified stream directly into `tar`: the archive
+/// is only forwarded to the remote *after* the digest check passes.
 ///
 /// The entire operation (download + remote extraction) is bounded by
 /// [`INSTALL_TIMEOUT_SECS`].
@@ -163,6 +188,10 @@ async fn install_remote_codex(
 }
 
 /// Inner (non-timeout-wrapped) implementation of the install step.
+///
+/// Downloads the tar.gz into a temp file while streaming the bytes through a
+/// SHA-256 hasher.  After the download finishes the digest is checked, and only
+/// if it matches is the temp file streamed into the remote child process.
 async fn install_remote_codex_inner(
     launcher: &RemoteLauncher,
     triple: &str,
@@ -179,29 +208,41 @@ async fn install_remote_codex_inner(
         reqwest::Client::builder().user_agent("codex-exec-server"),
     )?;
 
-    // Download SHA256SUMS first.
-    let sums_bytes = client
-        .get(&sums_url)
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?;
+    // Download SHA256SUMS first (small file; full buffer is fine).
+    let sums_response = client.get(&sums_url).send().await?;
+    check_github_response_status(&sums_response, triple, version)?;
+    let sums_bytes = sums_response.error_for_status()?.bytes().await?;
 
     // Parse expected digest.
     let expected_hex = parse_sha256sums(&sums_bytes, &asset_name)?;
 
-    // Download the archive.
-    let archive_bytes = client
-        .get(&archive_url)
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?;
+    // Download the archive into a temporary file while computing the digest.
+    // This keeps RAM usage O(chunk size) regardless of archive size.
+    // NamedTempFile is deleted automatically when `_tmp` is dropped.
+    let _tmp = tempfile::NamedTempFile::new().map_err(ProvisionError::TempFileIo)?;
+    let tmp_path = _tmp.path().to_owned();
+    let mut tmp_file = File::create(&tmp_path)
+        .await
+        .map_err(ProvisionError::TempFileIo)?;
 
-    // Verify digest.
-    let actual_hex = sha256_hex(&archive_bytes);
+    let archive_response = client.get(&archive_url).send().await?;
+    check_github_response_status(&archive_response, triple, version)?;
+    let mut stream = archive_response.error_for_status()?.bytes_stream();
+
+    let mut hasher = Sha256::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        hasher.update(&chunk);
+        tmp_file
+            .write_all(&chunk)
+            .await
+            .map_err(ProvisionError::TempFileIo)?;
+    }
+    tmp_file.flush().await.map_err(ProvisionError::TempFileIo)?;
+    drop(tmp_file);
+
+    // Verify digest now that the full archive is written.
+    let actual_hex = finalize_sha256_hex(hasher);
     if actual_hex != expected_hex {
         return Err(ProvisionError::DigestMismatch {
             asset: asset_name,
@@ -210,7 +251,7 @@ async fn install_remote_codex_inner(
         });
     }
 
-    // Stream the archive to the remote for extraction.
+    // Stream the verified archive to the remote for extraction.
     //
     // The codex-package tar.gz layout (from install.sh) places the binary at
     // `bin/codex` relative to the archive root.  We extract into a versioned
@@ -249,12 +290,24 @@ async fn install_remote_codex_inner(
         ProvisionError::ProbeOutputParse("install command has no stdin".to_string())
     })?;
 
-    // Write the archive bytes to the child's stdin, then close it so tar can
-    // see EOF.
-    child_stdin
-        .write_all(&archive_bytes)
+    // Stream the verified temp file into the child's stdin chunk by chunk.
+    let mut read_file = File::open(&tmp_path)
         .await
-        .map_err(ProvisionError::LauncherIo)?;
+        .map_err(ProvisionError::TempFileIo)?;
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = read_file
+            .read(&mut buf)
+            .await
+            .map_err(ProvisionError::TempFileIo)?;
+        if n == 0 {
+            break;
+        }
+        child_stdin
+            .write_all(&buf[..n])
+            .await
+            .map_err(ProvisionError::LauncherIo)?;
+    }
     drop(child_stdin);
 
     let output = child
@@ -269,6 +322,31 @@ async fn install_remote_codex_inner(
         });
     }
 
+    Ok(())
+}
+
+/// Inspects the HTTP response status before consuming the body and maps
+/// rate-limit (403/429) and not-found (404) responses to specific errors.
+///
+/// Note: this consumes a shared reference; call it before `.error_for_status()`
+/// or `.bytes()`.
+fn check_github_response_status(
+    response: &reqwest::Response,
+    triple: &str,
+    version: &str,
+) -> Result<(), ProvisionError> {
+    let status = response.status();
+    if status == StatusCode::NOT_FOUND {
+        return Err(ProvisionError::AssetNotFound {
+            triple: triple.to_string(),
+            version: version.to_string(),
+        });
+    }
+    if status == StatusCode::FORBIDDEN || status == StatusCode::TOO_MANY_REQUESTS {
+        return Err(ProvisionError::GitHubRateLimit {
+            status: status.as_u16(),
+        });
+    }
     Ok(())
 }
 
@@ -369,13 +447,22 @@ pub(crate) fn parse_sha256sums(sums: &[u8], asset_name: &str) -> Result<String, 
     })
 }
 
-/// Returns the lowercase hex-encoded SHA-256 digest of `data`.
-fn sha256_hex(data: &[u8]) -> String {
-    let hash = Sha256::digest(data);
+/// Finalizes a running SHA-256 hasher and returns the lowercase hex string.
+fn finalize_sha256_hex(hasher: Sha256) -> String {
+    let hash = hasher.finalize();
     hash.iter().fold(String::with_capacity(64), |mut acc, b| {
         let _ = write!(acc, "{b:02x}");
         acc
     })
+}
+
+/// Normalizes a version string for comparison: trims whitespace and strips a
+/// leading `v` character.
+///
+/// This prevents false "version mismatch" results when one side uses `"v1.2.3"`
+/// and the other uses `"1.2.3"`.
+pub(crate) fn normalize_version(v: &str) -> &str {
+    v.trim().strip_prefix('v').unwrap_or(v.trim())
 }
 
 #[cfg(test)]

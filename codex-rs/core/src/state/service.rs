@@ -25,7 +25,6 @@ use arc_swap::ArcSwapOption;
 use codex_analytics::AnalyticsEventsClient;
 use codex_core_plugins::PluginsManager;
 use codex_exec_server::EnvironmentManager;
-use codex_exec_server::provision::RemoteLauncher;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ExtensionDataInit;
 use codex_extension_api::ExtensionRegistry;
@@ -34,13 +33,11 @@ use codex_login::AuthManager;
 use codex_mcp::McpRuntime;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_otel::SessionTelemetry;
-use codex_protocol::ThreadId;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
 use codex_rollout::state_db::StateDbHandle;
 use codex_rollout_trace::ThreadTraceContext;
 use codex_thread_store::LiveThread;
 use codex_thread_store::ThreadStore;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::runtime::Handle;
 use tokio::sync::Mutex;
 
@@ -94,22 +91,11 @@ pub(crate) struct SessionServices {
     pub(crate) turn_environments: Arc<ThreadEnvironments>,
     /// Shared process-level environment registry. Sessions carry an `Arc` handle so they can pass
     /// the same manager through child-thread spawn paths without reconstructing it.
-    pub(crate) environment_manager: Arc<EnvironmentManager>,
-    /// Maps dynamically-registered environment ids (registered via `env_switch`) to their
-    /// working directories.  Resolved by `resolve_tool_environment` when the id is not found in
-    /// the turn's frozen `turn_environments` list.
-    pub(crate) dynamic_environment_cwds: Mutex<HashMap<String, AbsolutePathBuf>>,
-    /// Maps dynamically-registered environment ids to the preferred shell path
-    /// on that remote host, as reported by the probe script (`CODEX_SHELL:`).
-    /// Used by `resolve_tool_environment` to populate `TurnEnvironment.shell`
-    /// so that `shell_command` executes with the correct remote shell from the
-    /// first attempt.
-    pub(crate) dynamic_environment_shells: Mutex<HashMap<String, String>>,
-    /// Tracks the most-recently registered [`RemoteLauncher`] per thread.
     ///
-    /// Updated every time `env_switch` successfully registers a remote environment.
-    /// Used as the base launcher when `env_switch` is called in relative mode
-    /// (`extend` is present but `base` is absent).  Keyed by [`ThreadId`] so
-    /// that sub-agent threads each maintain their own independent cursor.
-    pub(crate) last_remote_launcher: Mutex<HashMap<ThreadId, RemoteLauncher>>,
+    /// Per-environment metadata (cwd, shell, last launcher) is stored directly
+    /// on the `EnvironmentManager` so that sub-agents that share the same
+    /// `Arc<EnvironmentManager>` can look up data registered by the parent
+    /// session.  See `EnvironmentManager::set_environment_metadata` /
+    /// `get_environment_metadata` / `set_last_launcher` / `get_last_launcher`.
+    pub(crate) environment_manager: Arc<EnvironmentManager>,
 }
