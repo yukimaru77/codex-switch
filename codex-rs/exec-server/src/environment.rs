@@ -36,6 +36,8 @@ use crate::local_file_system::LocalFileSystem;
 use crate::local_process::LocalProcess;
 use crate::process::ExecBackend;
 use crate::protocol::EnvironmentInfo;
+use crate::protocol::ShellInfo;
+use crate::provision::RemoteLauncher;
 use crate::remote::NoiseRendezvousEnvironmentConfig;
 use crate::remote_file_system::RemoteFileSystem;
 use crate::remote_process::RemoteProcess;
@@ -60,6 +62,32 @@ pub enum EnvironmentConnectionState {
     Disconnected,
 }
 
+/// Maximum number of entries in the per-environment metadata map.
+///
+/// This is a soft guard: environments registered by `env_switch` live for the
+/// lifetime of the parent session (there is no teardown / env_drop today), so
+/// the map can grow without bound inside a very long session.  Capping at 64
+/// makes runaway growth immediately visible rather than silently leaking
+/// memory.  A follow-up issue should implement proper env_drop / teardown.
+const MAX_ENV_METADATA_ENTRIES: usize = 64;
+
+/// Metadata associated with a dynamically-registered remote environment.
+///
+/// Stored inside [`EnvironmentManager`] so the data is accessible to
+/// sub-agents that share the same `Arc<EnvironmentManager>` but run in a
+/// separate [`Session`] (and therefore have separate `SessionServices`).
+#[derive(Debug, Clone)]
+pub struct EnvironmentMetadata {
+    /// Working directory that `env_switch` created / confirmed exists on the
+    /// remote host.  Expressed as a raw absolute-path string (the caller is
+    /// responsible for converting to `AbsolutePathBuf`).
+    pub cwd: String,
+    /// Preferred shell path on the remote host (e.g. `/bin/bash`), as
+    /// reported by the probe script.  `None` when the remote probe did not
+    /// emit a `CODEX_SHELL:` line.
+    pub shell: Option<String>,
+}
+
 /// Owns the execution/filesystem environments available to the Codex runtime.
 ///
 /// `EnvironmentManager` is a shared registry for concrete environments. Its
@@ -82,6 +110,24 @@ pub struct EnvironmentManager {
     local_environment: Option<Arc<Environment>>,
     local_runtime_paths: Option<ExecServerRuntimePaths>,
     http_client_factory: HttpClientFactory,
+    /// Per-environment metadata (cwd, shell) registered by `env_switch`.
+    ///
+    /// Stored here (rather than in per-session `SessionServices`) so that
+    /// sub-agents that share this `Arc<EnvironmentManager>` can look up
+    /// metadata that the parent session registered.
+    ///
+    /// See [`MAX_ENV_METADATA_ENTRIES`] for the soft size cap.
+    env_metadata: Mutex<HashMap<String, EnvironmentMetadata>>,
+    /// The most-recently registered [`RemoteLauncher`] per session-thread id
+    /// string (opaque key, typically `ThreadId::to_string()`).
+    ///
+    /// Updated every time `env_switch` successfully registers a remote
+    /// environment.  Used as the base launcher when `env_switch` is called in
+    /// relative mode (`extend` present, `base` absent).  Stored here so
+    /// sub-agents share the parent's cursor.
+    ///
+    /// See [`MAX_ENV_METADATA_ENTRIES`] for the soft size cap.
+    last_launcher: Mutex<HashMap<String, RemoteLauncher>>,
 }
 
 /// Information supplied by the environment owner when an environment is ready.
@@ -141,6 +187,8 @@ impl EnvironmentManager {
             local_runtime_paths: None,
             // Test-only construction has no application config from which to resolve proxy policy.
             http_client_factory: HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            env_metadata: Mutex::new(HashMap::new()),
+            last_launcher: Mutex::new(HashMap::new()),
         }
     }
 
@@ -152,6 +200,8 @@ impl EnvironmentManager {
             local_environment: None,
             local_runtime_paths: None,
             http_client_factory,
+            env_metadata: Mutex::new(HashMap::new()),
+            last_launcher: Mutex::new(HashMap::new()),
         }
     }
 
@@ -233,6 +283,8 @@ impl EnvironmentManager {
             local_environment: None,
             local_runtime_paths,
             http_client_factory,
+            env_metadata: Mutex::new(HashMap::new()),
+            last_launcher: Mutex::new(HashMap::new()),
         };
         manager.upsert_noise_environment(REMOTE_ENVIRONMENT_ID.to_string(), connect_provider)?;
         Ok(manager)
@@ -333,6 +385,8 @@ impl EnvironmentManager {
             local_environment,
             local_runtime_paths,
             http_client_factory,
+            env_metadata: Mutex::new(HashMap::new()),
+            last_launcher: Mutex::new(HashMap::new()),
         })
     }
 
@@ -581,6 +635,72 @@ impl EnvironmentManager {
         drop(replaced);
         environment.start_connecting();
         Ok(())
+    }
+
+    /// Records cwd and shell metadata for a dynamically-registered environment.
+    ///
+    /// Call this **before** [`Self::upsert_stdio_environment`] so that any
+    /// concurrent lookup immediately after `upsert` finds correct values.
+    /// Both operations together are not atomic, but recording metadata first
+    /// eliminates the window where an environment is registered without cwd/shell.
+    ///
+    /// If the map already holds [`MAX_ENV_METADATA_ENTRIES`] entries for other
+    /// ids, an arbitrary entry is evicted to cap memory growth.  Active
+    /// environments will re-register metadata on the next `env_switch` call.
+    ///
+    /// Note: remote `~/.codex/bin` cleanup and connection teardown (`env_drop`)
+    /// are not yet implemented; this is a known follow-up item.
+    pub fn set_environment_metadata(&self, environment_id: String, metadata: EnvironmentMetadata) {
+        let mut map = self
+            .env_metadata
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if map.len() >= MAX_ENV_METADATA_ENTRIES && !map.contains_key(&environment_id) {
+            // Evict an arbitrary entry to stay within the cap.
+            if let Some(oldest_key) = map.keys().next().cloned() {
+                map.remove(&oldest_key);
+            }
+        }
+        map.insert(environment_id, metadata);
+    }
+
+    /// Returns the metadata for a dynamically-registered environment, if any.
+    pub fn get_environment_metadata(&self, environment_id: &str) -> Option<EnvironmentMetadata> {
+        self.env_metadata
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(environment_id)
+            .cloned()
+    }
+
+    /// Records the most-recently registered [`RemoteLauncher`] for a given
+    /// thread key (typically `thread_id.to_string()`).
+    ///
+    /// Used by `env_switch`'s relative mode (`extend` present, `base` absent).
+    /// Keyed by thread id so parallel threads each maintain an independent cursor.
+    ///
+    /// Subject to the same [`MAX_ENV_METADATA_ENTRIES`] soft cap as metadata.
+    pub fn set_last_launcher(&self, thread_key: String, launcher: RemoteLauncher) {
+        let mut map = self
+            .last_launcher
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if map.len() >= MAX_ENV_METADATA_ENTRIES && !map.contains_key(&thread_key) {
+            if let Some(oldest_key) = map.keys().next().cloned() {
+                map.remove(&oldest_key);
+            }
+        }
+        map.insert(thread_key, launcher);
+    }
+
+    /// Returns the most-recently registered [`RemoteLauncher`] for a given
+    /// thread key, if any.
+    pub fn get_last_launcher(&self, thread_key: &str) -> Option<RemoteLauncher> {
+        self.last_launcher
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(thread_key)
+            .cloned()
     }
 
     /// Adds or replaces a named remote environment backed by a stdio command
