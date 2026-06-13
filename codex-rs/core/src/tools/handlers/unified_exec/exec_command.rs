@@ -241,8 +241,11 @@ impl ExecCommandHandler {
         .await;
         let shell_mode =
             shell_mode_for_environment(&turn.unified_exec_shell_mode, environment.as_ref());
-        // Remote environments may use a different OS and must build commands with their native
-        // shell; fall back to the session shell when the environment did not report one.
+        // Prefer the resolved environment's shell (detected by the remote probe,
+        // e.g. `/bin/sh` in a container that has no zsh) over the host login
+        // shell, so a remote command is not wrapped in a shell that does not
+        // exist there. An explicit `shell` argument from the model still wins
+        // inside `get_command`.
         let shell = turn_environment
             .shell
             .clone()

@@ -212,7 +212,13 @@ pub(crate) async fn resolve_tool_environment(
         resolved.selection.environment_id = env_id.to_string();
         resolved.selection.cwd = codex_utils_path_uri::PathUri::from_abs_path(&cwd);
         resolved.environment = environment;
-        resolved.shell = None;
+        resolved.shell = {
+            let shells = session.services.dynamic_environment_shells.lock().await;
+            shells.get(env_id).cloned()
+        }
+        .map(|shell_path| {
+            crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell_path))
+        });
         return Ok(Some(resolved));
     }
 
