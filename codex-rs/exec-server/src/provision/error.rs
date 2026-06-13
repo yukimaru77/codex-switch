@@ -29,6 +29,19 @@ pub enum ProvisionError {
     #[error("failed to build HTTP client: {0}")]
     HttpClientBuild(#[from] BuildCustomCaTransportError),
 
+    /// GitHub API rate limit hit (HTTP 403 or 429).
+    ///
+    /// Set GITHUB_TOKEN (or GH_TOKEN / CODEX_GITHUB_TOKEN) to raise the limit,
+    /// or retry after the rate-limit window resets.
+    #[error("GitHub API rate limit exceeded (HTTP {status}): set GITHUB_TOKEN or retry later")]
+    GitHubRateLimit { status: u16 },
+
+    /// The requested release asset was not found on GitHub (HTTP 404).
+    #[error(
+        "release asset not found on GitHub for triple '{triple}' version '{version}' (HTTP 404)"
+    )]
+    AssetNotFound { triple: String, version: String },
+
     /// The downloaded archive digest did not match the expected value.
     #[error("SHA-256 mismatch for {asset}: expected {expected}, got {actual}")]
     DigestMismatch {
@@ -52,4 +65,8 @@ pub enum ProvisionError {
     /// A command exceeded its allowed time limit.
     #[error("command timed out after {secs}s: {context}")]
     Timeout { secs: u64, context: String },
+
+    /// An I/O error occurred when writing to a temporary file during install.
+    #[error("temporary file I/O error during install: {0}")]
+    TempFileIo(#[source] std::io::Error),
 }
