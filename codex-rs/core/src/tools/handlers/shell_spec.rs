@@ -76,7 +76,10 @@ pub(crate) fn create_exec_command_tool_with_environment_id(
         properties.insert(
             "environment_id".to_string(),
             JsonSchema::string(Some(
-                "Environment id from <environment_context>. Omit to use the primary environment."
+                "Run this call inside a specific execution target: pass an `environment_id` \
+                 returned by the env_switch tool (e.g. `docker:foo` or `ssh:dgx>docker:c`) to \
+                 execute inside that container/host. Omit it to run on the local host. \
+                 Relative paths resolve against that environment's working directory."
                     .to_string(),
             )),
         );
@@ -232,7 +235,10 @@ pub fn create_request_permissions_tool(description: String) -> ToolSpec {
         (
             "environment_id".to_string(),
             JsonSchema::string(Some(
-                "Environment id from <environment_context>. Omit to use the primary environment."
+                "Run this call inside a specific execution target: pass an `environment_id` \
+                 returned by the env_switch tool (e.g. `docker:foo` or `ssh:dgx>docker:c`) to \
+                 execute inside that container/host. Omit it to run on the local host. \
+                 Relative paths resolve against that environment's working directory."
                     .to_string(),
             )),
         ),
