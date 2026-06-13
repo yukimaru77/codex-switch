@@ -24,6 +24,12 @@ pub struct RemoteProbe {
     /// The probe checks both `command -v codex` (PATH-based) and
     /// `~/.codex/bin/codex` (the standard installation symlink).
     pub existing: Option<(String, String)>,
+    /// Path to the preferred shell on the remote host.
+    ///
+    /// Determined by: `$SHELL` (if the binary exists), then `bash`, then `sh`.
+    /// `None` only if the probe output did not include a `CODEX_SHELL:` line
+    /// (e.g. output from an older probe script version).
+    pub shell: Option<String>,
 }
 
 /// Shell script that collects all probe data in one round-trip.
@@ -54,6 +60,8 @@ if [ -n "$_codex_path" ]; then
     echo "CODEX_VERSION:$_ver"
   fi
 fi
+_sh="$( { [ -n "$SHELL" ] && command -v "$SHELL"; } 2>/dev/null || command -v bash 2>/dev/null || command -v sh 2>/dev/null )"
+[ -n "$_sh" ] && echo "CODEX_SHELL:$_sh"
 "#;
 
 /// Runs the probe script on the remote via `launcher` and returns the parsed
@@ -110,12 +118,15 @@ pub(crate) fn parse_probe_output(output: &str) -> Result<RemoteProbe, ProvisionE
 
     let mut codex_path: Option<String> = None;
     let mut codex_version: Option<String> = None;
+    let mut shell: Option<String> = None;
 
     for line in lines {
         if let Some(path) = line.strip_prefix("CODEX_PATH:") {
             codex_path = Some(path.trim().to_string());
         } else if let Some(version) = line.strip_prefix("CODEX_VERSION:") {
             codex_version = Some(version.trim().to_string());
+        } else if let Some(sh) = line.strip_prefix("CODEX_SHELL:") {
+            shell = Some(sh.trim().to_string());
         }
     }
 
@@ -129,6 +140,7 @@ pub(crate) fn parse_probe_output(output: &str) -> Result<RemoteProbe, ProvisionE
         arch,
         home,
         existing,
+        shell,
     })
 }
 
