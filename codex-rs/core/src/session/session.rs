@@ -1130,6 +1130,7 @@ impl Session {
                 turn_environments: Arc::clone(&turn_environments),
                 environment_manager: Arc::clone(&environment_manager),
                 dynamic_environment_cwds: Mutex::new(HashMap::new()),
+                dynamic_environment_shells: Mutex::new(HashMap::new()),
                 last_remote_launcher: Mutex::new(HashMap::new()),
             };
             let sess = Arc::new(Session {
