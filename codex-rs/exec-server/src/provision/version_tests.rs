@@ -58,6 +58,16 @@ fn exact_policy_reuses_only_on_exact_match() {
 }
 
 #[test]
+fn exact_policy_normalizes_leading_v() {
+    // "v1.2.3" and "1.2.3" must compare equal after normalization.
+    let policy = VersionPolicy::Exact("1.2.3".to_string());
+    assert!(policy.is_satisfied_by_existing("v1.2.3"));
+
+    let policy_v = VersionPolicy::Exact("v1.2.3".to_string());
+    assert!(policy_v.is_satisfied_by_existing("1.2.3"));
+}
+
+#[test]
 fn latest_policy_never_reuses_offline() {
     // Latest must always re-check over the network, even if something exists.
     assert!(!VersionPolicy::Latest.is_satisfied_by_existing("9.9.9"));
