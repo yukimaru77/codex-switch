@@ -101,6 +101,9 @@ impl ShellCommandHandler {
         shell.derive_exec_args(command, use_login_shell)
     }
 
+    /// The environment's own shell (`turn_environment.shell`, populated by
+    /// `resolve_tool_environment` from `dynamic_environment_shells`) wraps the
+    /// command when present; `session.user_shell()` is only the fallback.
     pub(super) fn to_exec_params(
         params: &ShellCommandToolCallParams,
         session: &crate::session::session::Session,
