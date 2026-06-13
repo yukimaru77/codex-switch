@@ -341,6 +341,12 @@ async fn handle_remote_switch(
         cwds.insert(environment_id.clone(), abs_cwd);
     }
 
+    // --- Step 4c: record the remote shell so resolve_tool_environment can wire it ---
+    if let Some(remote_shell) = provisioned.shell.clone() {
+        let mut shells = session.services.dynamic_environment_shells.lock().await;
+        shells.insert(environment_id.clone(), remote_shell);
+    }
+
     // --- Step 4b: update per-thread last-launcher cursor (relative mode base) ---
     {
         let mut cursors = session.services.last_remote_launcher.lock().await;
