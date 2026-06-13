@@ -147,17 +147,27 @@ pub(crate) fn create_env_switch_tool() -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: ENV_SWITCH_TOOL_NAME.to_string(),
-        description: "Switch the agent's execution environment so that ALL subsequent tools \
-            (shell, apply_patch, read_file, …) run in the target environment. \
-            Use target=`docker` to enter a running container, target=`ssh` to enter a \
-            remote host over SSH, and target=`local` to return to the local machine. \
-            For multi-hop routing (e.g. SSH into a remote host then docker exec into a \
-            container), use the `hops` array instead of `target`. \
-            For relative mode (add one layer to the current environment), supply `extend` \
-            with an optional `base` environment_id — for example, after switching to \
-            `ssh:dgx`, call env_switch with base=\"ssh:dgx\" and \
-            extend={\"type\":\"docker\",\"container\":\"c\"} to reach `ssh:dgx>docker:c`. \
-            The remote codex exec-server is provisioned automatically if it is absent."
+        description: "Prepare a Docker container or SSH host as an execution target and \
+            return its `environment_id`. This does NOT change where your other tools run \
+            by itself: after calling env_switch, pass the returned `environment_id` on each \
+            shell / exec_command / apply_patch / read_file / view_image call to run THAT \
+            call inside the target; calls that omit `environment_id` keep running on the \
+            local host. A single turn can therefore mix host and remote work. \
+            WHEN TO USE: call this first whenever the task asks you to read, edit, run, or \
+            inspect files or commands that live inside a Docker container or on a remote \
+            SSH host (e.g. \"fix the bug in container web\", \"run the tests on dgx\", \
+            \"edit /app/main.py in the foo container\"). Get the id, then use it on the \
+            tools that do the work. You do not need the user to mention env_switch. \
+            ADDRESSING: target=`docker` (with `container`) for a local container, \
+            target=`ssh` (with `host`) for a remote host, target=`local` to note you are \
+            back on the host. For nesting (e.g. SSH into a host then docker exec into a \
+            container there), use the `hops` array [outer→inner] instead of `target`. \
+            To add one layer to an environment you already created, use `extend` (one hop) \
+            with an optional `base` environment_id — e.g. after `ssh:dgx`, \
+            base=\"ssh:dgx\" + extend={\"type\":\"docker\",\"container\":\"c\"} yields \
+            `ssh:dgx>docker:c`; omit `base` to extend the environment you most recently \
+            switched into. The remote codex exec-server is provisioned automatically if \
+            absent, so the target only needs a shell."
             .to_string(),
         strict: false,
         defer_loading: None,
