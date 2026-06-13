@@ -20,6 +20,7 @@ pub use launcher::Hop;
 pub use launcher::RemoteLauncher;
 pub use launcher::posix_single_quote;
 pub use launcher::shell_join;
+pub use launcher::validate_hop_value;
 pub use probe::RemoteProbe;
 pub use probe::probe;
 pub use version::VersionPolicy;
