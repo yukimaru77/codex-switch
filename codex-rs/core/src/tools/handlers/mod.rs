@@ -206,12 +206,19 @@ pub(crate) async fn resolve_tool_environment(
             .environments
             .primary()
             .map_or_else(Vec::new, |primary| primary.workspace_roots().to_vec());
+        let shell = {
+            let shells = session.services.dynamic_environment_shells.lock().await;
+            shells.get(env_id).cloned()
+        }
+        .map(|shell_path| {
+            crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell_path))
+        });
         return Ok(Some(TurnEnvironment::new(
             env_id.to_string(),
             environment,
             codex_utils_path_uri::PathUri::from_abs_path(&cwd),
             workspace_roots,
-            None,
+            shell,
         )));
     }
 
