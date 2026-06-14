@@ -435,6 +435,7 @@ fn exec_command_tool_output_formats_truncated_response() {
         exit_code: Some(0),
         original_token_count: Some(10),
         hook_command: None,
+        advisory: None,
     }
     .to_response_item("call-42", &payload);
 
@@ -456,6 +457,41 @@ fn exec_command_tool_output_formats_truncated_response() {
                     \n.*tokens\ truncated.*
                     $"#,
                 &text,
+            );
+        }
+        other => panic!("expected FunctionCallOutput, got {other:?}"),
+    }
+}
+
+#[test]
+fn exec_command_tool_output_appends_advisory_after_output() {
+    let payload = ToolPayload::Function {
+        arguments: "{}".to_string(),
+    };
+    let response = ExecCommandToolOutput {
+        event_call_id: "call-43".to_string(),
+        chunk_id: "abc124".to_string(),
+        wall_time: std::time::Duration::from_millis(1250),
+        raw_output: b"remote output\n".to_vec(),
+        truncation_policy: TruncationPolicy::Tokens(10_000),
+        max_output_tokens: None,
+        process_id: None,
+        exit_code: Some(0),
+        original_token_count: Some(2),
+        hook_command: None,
+        advisory: Some("Advisory: use env_switch for continued work.".to_string()),
+    }
+    .to_response_item("call-43", &payload);
+
+    match response {
+        ResponseInputItem::FunctionCallOutput { output, .. } => {
+            let text = output
+                .body
+                .to_text()
+                .expect("exec output should serialize as text");
+            assert!(
+                text.ends_with("remote output\n\nAdvisory: use env_switch for continued work."),
+                "{text}"
             );
         }
         other => panic!("expected FunctionCallOutput, got {other:?}"),
