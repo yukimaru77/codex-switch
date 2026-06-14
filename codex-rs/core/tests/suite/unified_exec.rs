@@ -895,6 +895,83 @@ async fn unified_exec_advises_env_switch_after_raw_ssh() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unified_exec_advises_env_switch_with_explicit_environment_id() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+    skip_if_windows!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let mut builder = test_codex().with_model("gpt-5.2").with_config(|config| {
+        config.use_experimental_unified_exec_tool = true;
+        config
+            .features
+            .enable(Feature::UnifiedExec)
+            .expect("test config should allow unified exec feature update");
+        config
+            .features
+            .enable(Feature::EnvSwitch)
+            .expect("test config should allow env_switch feature update");
+    });
+    let test = builder.build_with_remote_env(&server).await?;
+
+    let docker_path = test.config.cwd.join("docker");
+    fs::write(&docker_path, "#!/bin/sh\nprintf 'fake-docker-output\\n'\n")?;
+    fs::set_permissions(&docker_path, fs::Permissions::from_mode(0o755))?;
+
+    let call_id = "uexec-explicit-env-docker-advisory";
+    let args = json!({
+        "cmd": format!("{} exec example-container hostname", docker_path.display()),
+        "environment_id": "local",
+        "yield_time_ms": 250,
+    });
+
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "exec_command", &serde_json::to_string(&args)?),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_response_created("resp-2"),
+            ev_assistant_message("msg-1", "finished"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    let request_log = mount_sse_sequence(&server, responses).await;
+
+    submit_unified_exec_turn(
+        &test,
+        "run fake explicit docker exec",
+        PermissionProfile::Disabled,
+    )
+    .await?;
+
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let output = request_log
+        .function_call_output_text(call_id)
+        .context("missing explicit environment docker function_call_output")?;
+    assert!(
+        output.contains("fake-docker-output"),
+        "expected command output, got: {output}",
+    );
+    assert!(
+        output.contains("Advisory: this command used raw SSH/Docker")
+            && output.contains("env_switch")
+            && output.contains("target=`local`")
+            && output.contains("env_status"),
+        "expected env_switch advisory even with explicit environment_id, got: {output}",
+    );
+
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unified_exec_emits_exec_command_end_event() -> Result<()> {
     // TODO(anp): Remove after unified-exec fixtures use target-native commands.
