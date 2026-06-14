@@ -163,13 +163,26 @@ async fn thread_settings_applied_event(sess: &Session) -> EventMsg {
     let (snapshot, active_environment_id) = {
         let state = sess.state.lock().await;
         let snapshot = state.session_configuration.thread_config_snapshot();
-        // Report the first sticky environment as the active one.  The local
-        // environment ("local") maps to no badge; any other value (e.g.
-        // "docker:container" or "ssh:host") is surfaced as a status badge.
-        let active_environment_id = snapshot
-            .environment_selections()
-            .first()
-            .map(|sel| sel.environment_id.clone())
+        let parent_thread_id = state.session_configuration.parent_thread_id;
+        let env_switch_default_environment_id = [Some(sess.thread_id), parent_thread_id]
+            .into_iter()
+            .flatten()
+            .find_map(|thread_id| {
+                sess.services
+                    .environment_manager
+                    .get_last_environment_id(&thread_id.to_string())
+            });
+        // Report the environment that compatible tools use when environment_id
+        // is omitted: env_switch's current thread/parent cursor first, then the
+        // first sticky configured environment. The local environment maps to no
+        // badge; non-local ids surface as a status badge.
+        let active_environment_id = env_switch_default_environment_id
+            .or_else(|| {
+                snapshot
+                    .environment_selections()
+                    .first()
+                    .map(|sel| sel.environment_id.clone())
+            })
             .filter(|id| id != LOCAL_ENVIRONMENT_ID);
         (snapshot, active_environment_id)
     };

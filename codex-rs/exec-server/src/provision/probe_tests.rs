@@ -1,12 +1,12 @@
 use pretty_assertions::assert_eq;
 
 use super::parse_probe_output;
+use super::probe_script;
 use crate::provision::RemoteProbe;
 
 #[test]
 fn parse_probe_with_existing_codex() {
-    let output =
-        "Linux\nx86_64\n/home/user\nCODEX_PATH:/home/user/.codex/bin/codex\nCODEX_VERSION:1.2.3\n";
+    let output = "Linux\nx86_64\n/home/user\nCODEX_PATH:/home/user/.codex-server/env-switch/current/codex\nCODEX_VERSION:1.2.3\n";
     assert_eq!(
         parse_probe_output(output).unwrap(),
         RemoteProbe {
@@ -14,7 +14,7 @@ fn parse_probe_with_existing_codex() {
             arch: "x86_64".to_string(),
             home: "/home/user".to_string(),
             existing: Some((
-                "/home/user/.codex/bin/codex".to_string(),
+                "/home/user/.codex-server/env-switch/current/codex".to_string(),
                 "1.2.3".to_string(),
             )),
             shell: None,
@@ -39,7 +39,7 @@ fn parse_probe_without_existing_codex() {
 
 #[test]
 fn parse_probe_darwin() {
-    let output = "Darwin\narm64\n/Users/alice\nCODEX_PATH:/Users/alice/.codex/bin/codex\nCODEX_VERSION:0.9.1\n";
+    let output = "Darwin\narm64\n/Users/alice\nCODEX_PATH:/Users/alice/.codex-server/env-switch/current/codex\nCODEX_VERSION:0.9.1\n";
     assert_eq!(
         parse_probe_output(output).unwrap(),
         RemoteProbe {
@@ -47,7 +47,7 @@ fn parse_probe_darwin() {
             arch: "arm64".to_string(),
             home: "/Users/alice".to_string(),
             existing: Some((
-                "/Users/alice/.codex/bin/codex".to_string(),
+                "/Users/alice/.codex-server/env-switch/current/codex".to_string(),
                 "0.9.1".to_string(),
             )),
             shell: None,
@@ -83,11 +83,28 @@ fn parse_probe_path_without_version_yields_no_existing() {
 }
 
 #[test]
+fn parse_probe_ignores_legacy_codex_path_even_with_version() {
+    let output =
+        "Linux\nx86_64\n/home/ci\nCODEX_PATH:/home/ci/.codex/bin/codex\nCODEX_VERSION:1.2.3\n";
+    let probe = parse_probe_output(output).unwrap();
+    assert_eq!(probe.home, "/home/ci");
+    assert!(probe.existing.is_none());
+}
+
+#[test]
 fn parse_probe_with_codex_shell() {
-    let output = "Linux\nx86_64\n/home/user\nCODEX_PATH:/home/user/.codex/bin/codex\nCODEX_VERSION:1.2.3\nCODEX_SHELL:/bin/bash\n";
+    let output = "Linux\nx86_64\n/home/user\nCODEX_PATH:/home/user/.codex-server/env-switch/current/codex\nCODEX_VERSION:1.2.3\nCODEX_SHELL:/bin/bash\n";
     let probe = parse_probe_output(output).unwrap();
     assert_eq!(probe.shell, Some("/bin/bash".to_string()));
     assert_eq!(probe.os, "Linux");
+}
+
+#[test]
+fn probe_script_checks_only_managed_codex_path() {
+    let script = probe_script();
+    assert!(script.contains("$HOME/.codex-server/env-switch/current/codex"));
+    assert!(!script.contains("command -v codex"));
+    assert!(!script.contains("$HOME/.codex/bin/codex"));
 }
 
 #[test]
