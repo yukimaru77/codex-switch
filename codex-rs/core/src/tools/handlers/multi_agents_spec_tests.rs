@@ -196,6 +196,7 @@ fn spawn_agent_tool_v1_guides_remote_docker_delegation_without_raw_wrappers() {
         hide_agent_type_model_reasoning: false,
         include_usage_hint: true,
         usage_hint_text: None,
+        max_concurrent_threads_per_session: None,
     });
 
     let ToolSpec::Namespace(namespace) = tool else {
