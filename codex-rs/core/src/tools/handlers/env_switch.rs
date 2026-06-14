@@ -73,6 +73,7 @@ struct EnvSwitchArgs {
     extend: Option<HopArg>,
 }
 
+#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for EnvSwitchHandler {
     fn tool_name(&self) -> ToolName {
         ToolName::plain(ENV_SWITCH_TOOL_NAME)
@@ -82,27 +83,28 @@ impl ToolExecutor<ToolInvocation> for EnvSwitchHandler {
         create_env_switch_tool()
     }
 
-    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
-        Box::pin(async move {
-            let ToolInvocation {
-                session,
-                turn,
-                payload,
-                ..
-            } = invocation;
+    async fn handle(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
+        let ToolInvocation {
+            session,
+            turn,
+            payload,
+            ..
+        } = invocation;
 
-            let arguments = match payload {
-                ToolPayload::Function { arguments } => arguments,
-                _ => {
-                    return Err(FunctionCallError::RespondToModel(format!(
-                        "{ENV_SWITCH_TOOL_NAME} handler received unsupported payload"
-                    )));
-                }
-            };
+        let arguments = match payload {
+            ToolPayload::Function { arguments } => arguments,
+            _ => {
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "{ENV_SWITCH_TOOL_NAME} handler received unsupported payload"
+                )));
+            }
+        };
 
-            let args: EnvSwitchArgs = parse_arguments(&arguments)?;
-            handle_env_switch(&session, &turn, args).await
-        })
+        let args: EnvSwitchArgs = parse_arguments(&arguments)?;
+        handle_env_switch(&session, &turn, args).await
     }
 }
 
