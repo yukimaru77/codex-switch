@@ -494,7 +494,7 @@ impl ChatWidget {
     fn apply_thread_settings(&mut self, mut settings: ThreadSettings) {
         let cwd_changed = self.config.cwd != settings.cwd;
         self.apply_thread_settings_cwd(settings.cwd.clone());
-        // Update the env_switch status badge from the active environment id.
+        // Update the status badge for the non-local default execution target.
         // "docker:container" → "🐳 container", "ssh:host" → "🔗 host",
         // None (local environment) → no badge.
         self.env_switch_badge = settings
@@ -764,8 +764,9 @@ impl ChatWidget {
     }
 }
 
-/// Converts an `active_environment_id` from a [`ThreadSettings`] update into a
-/// status-badge string for the TUI status line.
+/// Converts a non-local default execution environment id from a
+/// [`ThreadSettings`] update into a status-badge string for the TUI status
+/// line.
 ///
 /// - `"docker:<name>"` → `"🐳 <name>"`
 /// - `"ssh:<host>"` → `"🔗 <host>"`
@@ -803,8 +804,8 @@ mod badge_tests {
     #[test]
     fn ssh_environment_id_produces_link_badge() {
         assert_eq!(
-            env_switch_badge_from_environment_id("ssh:dgx"),
-            Some("🔗 dgx".to_string())
+            env_switch_badge_from_environment_id("ssh:example-host"),
+            Some("🔗 example-host".to_string())
         );
     }
 

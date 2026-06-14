@@ -112,6 +112,10 @@ pub enum ApplyPatchError {
         "patch detected without explicit call to apply_patch. Rerun as [\"apply_patch\", \"<patch>\"]"
     )]
     ImplicitInvocation,
+    /// Environment selection is handled by the apply_patch tool, not by
+    /// shell-intercepted apply_patch commands.
+    #[error("environment_id is only supported by the apply_patch tool invocation")]
+    EnvironmentIdInShellInvocation,
 }
 
 impl From<std::io::Error> for ApplyPatchError {

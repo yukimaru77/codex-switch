@@ -98,6 +98,25 @@ fn validate_hop_value_err_gt_separator() {
     assert!(err.contains("`>`"), "unexpected error: {err}");
 }
 
+#[test]
+fn validate_hop_value_err_whitespace() {
+    let err = validate_hop_value("host name").unwrap_err();
+    assert!(
+        err.contains("whitespace or control characters"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn validate_hop_value_err_too_long() {
+    let value = "a".repeat(257);
+    let err = validate_hop_value(&value).unwrap_err();
+    assert!(
+        err.contains("exceeds maximum 256"),
+        "unexpected error: {err}"
+    );
+}
+
 // --- id ------------------------------------------------------------------
 
 #[test]
@@ -116,13 +135,13 @@ fn id_single_ssh() {
 fn id_ssh_then_docker() {
     let launcher = RemoteLauncher::layered(vec![
         Hop::Ssh {
-            host: "dgx".to_string(),
+            host: "hostname".to_string(),
         },
         Hop::Docker {
             container: "c".to_string(),
         },
     ]);
-    assert_eq!(launcher.id(), "ssh:dgx>docker:c");
+    assert_eq!(launcher.id(), "ssh:hostname>docker:c");
 }
 
 #[test]
@@ -132,13 +151,13 @@ fn id_three_hops() {
             host: "bastion".to_string(),
         },
         Hop::Ssh {
-            host: "dgx".to_string(),
+            host: "hostname".to_string(),
         },
         Hop::Docker {
             container: "c".to_string(),
         },
     ]);
-    assert_eq!(launcher.id(), "ssh:bastion>ssh:dgx>docker:c");
+    assert_eq!(launcher.id(), "ssh:bastion>ssh:hostname>docker:c");
 }
 
 // --- helper: build the expected SSH prefix for a given host --------------
@@ -147,7 +166,11 @@ fn id_three_hops() {
 /// but *without* the final shell-word argument.
 fn ssh_prefix(host: &str) -> Vec<String> {
     let mut v = vec!["ssh".to_string()];
-    v.extend(SSH_HARDENING_FLAGS.iter().map(|s| s.to_string()));
+    v.extend(
+        SSH_HARDENING_FLAGS
+            .iter()
+            .map(std::string::ToString::to_string),
+    );
     v.push("--".to_string());
     v.push(host.to_string());
     v
@@ -260,13 +283,13 @@ fn ssh_exec_argv_collapses_to_single_quoted_arg() {
 
 #[test]
 fn ssh_docker_exec_argv() {
-    // hops = [Ssh{dgx}, Docker{c}], inner = ["codex", "exec-server", "--listen", "stdio"]
+    // hops = [Ssh{hostname}, Docker{c}], inner = ["codex", "exec-server", "--listen", "stdio"]
     // Expected fold (inner→outer):
     //   Docker step: ["docker","exec","-i","--","c","codex","exec-server","--listen","stdio"]
-    //   Ssh step:    ["ssh", <hardening>, "--", "dgx", shell_join(above)]
+    //   Ssh step:    ["ssh", <hardening>, "--", "hostname", shell_join(above)]
     let launcher = RemoteLauncher::layered(vec![
         Hop::Ssh {
-            host: "dgx".to_string(),
+            host: "hostname".to_string(),
         },
         Hop::Docker {
             container: "c".to_string(),
@@ -280,7 +303,7 @@ fn ssh_docker_exec_argv() {
     ];
     let argv = launcher.exec_argv(inner);
 
-    let prefix = ssh_prefix("dgx");
+    let prefix = ssh_prefix("hostname");
     assert_eq!(argv.len(), prefix.len() + 1);
     assert_eq!(&argv[..prefix.len()], prefix.as_slice());
     assert_eq!(
@@ -291,13 +314,13 @@ fn ssh_docker_exec_argv() {
 
 #[test]
 fn ssh_docker_shell_argv() {
-    // hops = [Ssh{dgx}, Docker{c}], script = "uname -m"
+    // hops = [Ssh{hostname}, Docker{c}], script = "uname -m"
     // inner = ["sh","-c","uname -m"]
     // Docker step: ["docker","exec","-i","--","c","sh","-c","uname -m"]
-    // Ssh step: ["ssh", <hardening>, "--", "dgx", shell_join(docker_tokens)]
+    // Ssh step: ["ssh", <hardening>, "--", "hostname", shell_join(docker_tokens)]
     let launcher = RemoteLauncher::layered(vec![
         Hop::Ssh {
-            host: "dgx".to_string(),
+            host: "hostname".to_string(),
         },
         Hop::Docker {
             container: "c".to_string(),
@@ -305,7 +328,7 @@ fn ssh_docker_shell_argv() {
     ]);
     let argv = launcher.shell_argv("uname -m");
 
-    let prefix = ssh_prefix("dgx");
+    let prefix = ssh_prefix("hostname");
     assert_eq!(argv.len(), prefix.len() + 1);
     assert_eq!(&argv[..prefix.len()], prefix.as_slice());
     assert_eq!(
@@ -386,7 +409,7 @@ fn from_id_roundtrip_single_ssh() {
 fn from_id_roundtrip_ssh_then_docker() {
     let original = RemoteLauncher::layered(vec![
         Hop::Ssh {
-            host: "dgx".to_string(),
+            host: "hostname".to_string(),
         },
         Hop::Docker {
             container: "c".to_string(),
@@ -394,7 +417,7 @@ fn from_id_roundtrip_ssh_then_docker() {
     ]);
     let parsed = RemoteLauncher::from_id(&original.id()).expect("parse failed");
     assert_eq!(parsed, original);
-    assert_eq!(parsed.id(), "ssh:dgx>docker:c");
+    assert_eq!(parsed.id(), "ssh:hostname>docker:c");
 }
 
 #[test]
@@ -404,7 +427,7 @@ fn from_id_roundtrip_three_hops() {
             host: "bastion".to_string(),
         },
         Hop::Ssh {
-            host: "dgx".to_string(),
+            host: "hostname".to_string(),
         },
         Hop::Docker {
             container: "c".to_string(),
@@ -412,7 +435,7 @@ fn from_id_roundtrip_three_hops() {
     ]);
     let parsed = RemoteLauncher::from_id(&original.id()).expect("parse failed");
     assert_eq!(parsed, original);
-    assert_eq!(parsed.id(), "ssh:bastion>ssh:dgx>docker:c");
+    assert_eq!(parsed.id(), "ssh:bastion>ssh:hostname>docker:c");
 }
 
 #[test]
@@ -432,7 +455,7 @@ fn from_id_error_unknown_type() {
 
 #[test]
 fn from_id_error_missing_colon() {
-    let result = RemoteLauncher::from_id("sshdgx");
+    let result = RemoteLauncher::from_id("sshhostname");
     assert!(
         result.is_err(),
         "expected error for missing colon separator, got: {result:?}"
@@ -502,22 +525,22 @@ fn from_id_rejects_gt_in_value() {
 
 #[test]
 fn with_appended_hop_adds_inner_layer() {
-    let base = RemoteLauncher::ssh("dgx");
+    let base = RemoteLauncher::ssh("hostname");
     let extended = base.with_appended_hop(Hop::Docker {
         container: "c".to_string(),
     });
-    assert_eq!(extended.id(), "ssh:dgx>docker:c");
+    assert_eq!(extended.id(), "ssh:hostname>docker:c");
     assert_eq!(extended.hops.len(), 2);
 }
 
 #[test]
 fn with_appended_hop_does_not_mutate_base() {
-    let base = RemoteLauncher::ssh("dgx");
+    let base = RemoteLauncher::ssh("hostname");
     let _extended = base.with_appended_hop(Hop::Docker {
         container: "c".to_string(),
     });
     // base is unchanged
-    assert_eq!(base.id(), "ssh:dgx");
+    assert_eq!(base.id(), "ssh:hostname");
     assert_eq!(base.hops.len(), 1);
 }
 
@@ -525,22 +548,22 @@ fn with_appended_hop_does_not_mutate_base() {
 
 #[test]
 fn three_hop_ssh_ssh_docker_exec_argv() {
-    // hops = [Ssh{bastion}, Ssh{dgx}, Docker{c}]
+    // hops = [Ssh{bastion}, Ssh{hostname}, Docker{c}]
     // inner = ["codex", "exec-server", "--listen", "stdio"]
     //
     // Fold innermost-first:
     //   1. Docker{c}: ["docker","exec","-i","--","c","codex","exec-server","--listen","stdio"]
-    //   2. Ssh{dgx}:  ["ssh", <hardening>, "--", "dgx", shell_join(step1)]
+    //   2. Ssh{hostname}:  ["ssh", <hardening>, "--", "hostname", shell_join(step1)]
     //      step1_joined = "'docker' 'exec' '-i' '--' 'c' 'codex' 'exec-server' '--listen' 'stdio'"
-    //      step2 = ["ssh", <hardening>, "--", "dgx", step1_joined]
+    //      step2 = ["ssh", <hardening>, "--", "hostname", step1_joined]
     //   3. Ssh{bastion}: ["ssh", <hardening>, "--", "bastion", shell_join(step2)]
-    //      shell_join(step2) = "'ssh' <quoted hardening flags> '--' 'dgx' '<posix_single_quote(step1_joined)>'"
+    //      shell_join(step2) = "'ssh' <quoted hardening flags> '--' 'hostname' '<posix_single_quote(step1_joined)>'"
     let launcher = RemoteLauncher::layered(vec![
         Hop::Ssh {
             host: "bastion".to_string(),
         },
         Hop::Ssh {
-            host: "dgx".to_string(),
+            host: "hostname".to_string(),
         },
         Hop::Docker {
             container: "c".to_string(),
@@ -572,8 +595,8 @@ fn three_hop_ssh_ssh_docker_exec_argv() {
     ];
     let step1_joined = shell_join(&step1_tokens);
 
-    // step2 tokens = ssh_prefix("dgx") + [step1_joined]
-    let mut step2_tokens = ssh_prefix("dgx");
+    // step2 tokens = ssh_prefix("hostname") + [step1_joined]
+    let mut step2_tokens = ssh_prefix("hostname");
     step2_tokens.push(step1_joined);
     let expected = shell_join(&step2_tokens);
     assert_eq!(argv.last().unwrap(), &expected);

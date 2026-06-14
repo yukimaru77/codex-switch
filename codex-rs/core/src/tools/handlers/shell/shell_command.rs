@@ -23,7 +23,6 @@ use crate::tools::context::boxed_tool_output;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
 use crate::tools::handlers::resolve_sandbox_permissions;
-use crate::tools::handlers::resolve_tool_environment;
 use crate::tools::handlers::resolve_workdir_base_path;
 use crate::tools::handlers::rewrite_function_string_argument;
 use crate::tools::handlers::updated_hook_command;
@@ -101,8 +100,7 @@ impl ShellCommandHandler {
         shell.derive_exec_args(command, use_login_shell)
     }
 
-    /// The environment's own shell (`turn_environment.shell`, populated by
-    /// `resolve_tool_environment` from `dynamic_environment_shells`) wraps the
+    /// The environment's own shell (`turn_environment.shell`) wraps the
     /// command when present; `session.user_shell()` is only the fallback.
     pub(super) fn to_exec_params(
         params: &ShellCommandToolCallParams,
@@ -209,47 +207,26 @@ impl ShellCommandHandler {
             )));
         };
 
-        // Resolve the environment_id before parsing the full params so that
-        // the cwd used for relative-path resolution comes from the selected
-        // environment rather than the deprecated turn-level cwd.
         let env_args: ShellCommandEnvironmentArgs = parse_arguments(&arguments).unwrap_or_default();
-        let resolved_environment =
-            resolve_tool_environment(&session, turn.as_ref(), env_args.environment_id.as_deref())
-                .await?;
+        if env_args.environment_id.is_some() {
+            return Err(FunctionCallError::RespondToModel(
+                "shell_command does not support environment_id; use exec_command, apply_patch, or view_image for env_switch targets"
+                    .to_string(),
+            ));
+        }
 
-        let turn_environment = match &resolved_environment {
-            Some(env) => env.clone(),
-            None => {
-                let Some(primary) = turn.environments.primary() else {
-                    return Err(FunctionCallError::RespondToModel(
-                        "shell is unavailable in this session".to_string(),
-                    ));
-                };
-                primary.clone()
-            }
+        let Some(turn_environment) = turn.environments.primary().cloned() else {
+            return Err(FunctionCallError::RespondToModel(
+                "shell is unavailable in this session".to_string(),
+            ));
         };
 
-        let base_cwd = resolved_environment
-            .as_ref()
-            .map(|e| e.cwd.clone())
-            .or_else(|| {
-                #[allow(deprecated)]
-                Some(turn.cwd.clone())
-            })
-            .unwrap();
+        #[allow(deprecated)]
+        let base_cwd = turn.cwd.clone();
         let cwd = resolve_workdir_base_path(&arguments, &base_cwd)?;
         let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
         #[allow(deprecated)]
-        let workdir = resolved_environment
-            .as_ref()
-            .map(|e| {
-                params
-                    .workdir
-                    .as_deref()
-                    .filter(|w| !w.is_empty())
-                    .map_or_else(|| e.cwd.clone(), |w| e.cwd.join(w))
-            })
-            .unwrap_or_else(|| turn.resolve_path(params.workdir.clone()));
+        let workdir = turn.resolve_path(params.workdir.clone());
         maybe_emit_implicit_skill_invocation(
             session.as_ref(),
             turn.as_ref(),
@@ -260,6 +237,8 @@ impl ShellCommandHandler {
         )
         .await;
         let prefix_rule = params.prefix_rule.clone();
+        // shell_command is not environment-aware: it always runs against the
+        // primary turn environment and the local user shell.
         let exec_params = Self::to_exec_params(
             &params,
             session.as_ref(),
@@ -267,12 +246,7 @@ impl ShellCommandHandler {
             &turn_environment,
             workdir.clone(),
         )?;
-        let shell_type = Some(
-            turn_environment
-                .shell
-                .as_ref()
-                .map_or_else(|| session.user_shell().shell_type, |shell| shell.shell_type),
-        );
+        let shell_type = Some(session.user_shell().shell_type);
         run_exec_like(RunExecLikeArgs {
             tool_name,
             exec_params,
@@ -287,7 +261,7 @@ impl ShellCommandHandler {
             tracker,
             call_id,
             shell_runtime_backend: self.shell_runtime_backend(),
-            resolved_environment,
+            resolved_environment: None,
         })
         .await
         .map(boxed_tool_output)

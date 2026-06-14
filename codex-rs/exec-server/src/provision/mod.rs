@@ -9,6 +9,7 @@
 mod error;
 mod install;
 mod launcher;
+mod paths;
 mod probe;
 mod triple;
 mod version;

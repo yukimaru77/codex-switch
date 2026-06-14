@@ -28,6 +28,7 @@ use crate::tools::context::ToolPayload;
 use crate::tools::handlers::ShellCommandHandler;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::CoreToolRuntime;
+use crate::tools::registry::ToolExecutor;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_protocol::protocol::EnvironmentConfig;
 use codex_protocol::protocol::EnvironmentConfigState;
@@ -268,6 +269,41 @@ fn shell_command_handler_rejects_login_when_disallowed() {
     assert!(
         err.to_string()
             .contains("login shell is disabled by config"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn shell_command_handler_rejects_environment_id() {
+    let payload = ToolPayload::Function {
+        arguments: json!({
+            "command": "pwd",
+            "environment_id": "ssh:example-host"
+        })
+        .to_string(),
+    };
+    let (session, turn) = make_session_and_context().await;
+    let handler = ShellCommandHandler::from(codex_tools::ShellCommandBackendConfig::Classic);
+    let result = handler
+        .handle(ToolInvocation {
+            session: session.into(),
+            turn: turn.into(),
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
+            tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
+            call_id: "call-shell-env".to_string(),
+            tool_name: codex_tools::ToolName::plain("shell_command"),
+            source: ToolCallSource::Direct,
+            payload,
+        })
+        .await;
+    let err = match result {
+        Ok(_) => panic!("environment_id should be rejected"),
+        Err(err) => err,
+    };
+
+    assert!(
+        err.to_string()
+            .contains("shell_command does not support environment_id"),
         "unexpected error: {err}"
     );
 }

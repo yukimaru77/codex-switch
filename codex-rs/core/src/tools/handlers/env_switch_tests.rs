@@ -3,15 +3,25 @@ use codex_exec_server::EnvironmentMetadata;
 use codex_exec_server::provision::Hop;
 use codex_exec_server::provision::RemoteLauncher;
 use codex_exec_server::provision::posix_single_quote;
+use codex_protocol::ThreadId;
 use codex_tools::ToolSpec;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use std::sync::Arc;
 
 use crate::tools::handlers::env_switch_spec::ENV_SWITCH_TOOL_NAME;
 use crate::tools::handlers::env_switch_spec::create_env_switch_tool;
 use crate::tools::registry::ToolExecutor;
 
+use super::EnvSwitchArgs;
 use super::EnvSwitchHandler;
 use super::HopArg;
+use super::handle_local_switch;
 use super::hop_from_arg;
+use super::implicit_base_launcher;
+use super::resolve_remote_cwd_script;
+use super::validate_addressing_mode;
+use crate::tools::handlers::environment_thread_keys;
+use crate::tools::handlers::resolve_tool_environment;
 
 // ---------------------------------------------------------------------------
 // Spec / arg-schema tests
@@ -39,25 +49,17 @@ fn spec_is_function_with_correct_name() {
 }
 
 #[test]
-fn spec_requires_target_field() {
+fn spec_does_not_require_target_because_hops_and_extend_are_valid_modes() {
     let spec = create_env_switch_tool();
     let ToolSpec::Function(tool) = spec else {
         panic!("expected ToolSpec::Function");
     };
     let params = tool.parameters;
-    // The required array must contain "target"
     let required = params.required.unwrap_or_default();
     assert!(
-        required.contains(&"target".to_string()),
-        "required array should contain `target`, got: {required:?}"
+        required.is_empty(),
+        "schema should leave addressing-mode validation to the runtime, got: {required:?}"
     );
-    // container / host / cwd must NOT be in required (they are optional)
-    for optional in ["container", "host", "cwd"] {
-        assert!(
-            !required.contains(&optional.to_string()),
-            "`{optional}` should not be required but was found in {required:?}"
-        );
-    }
 }
 
 #[test]
@@ -81,6 +83,48 @@ fn spec_has_all_expected_properties() {
             "missing property `{expected_key}` in spec, found: {properties:?}"
         );
     }
+}
+
+#[test]
+fn spec_describes_environment_id_contract_without_prompt_level_prohibition() {
+    let spec = create_env_switch_tool();
+    let ToolSpec::Function(tool) = spec else {
+        panic!("expected ToolSpec::Function");
+    };
+    assert!(
+        tool.description
+            .contains("exec_command, apply_patch, or view_image"),
+        "env_switch description should name compatible environment-aware tools"
+    );
+    assert!(
+        tool.description
+            .contains("make it the default execution environment")
+            && tool
+                .description
+                .contains("calls that omit `environment_id`"),
+        "env_switch description should explain omitted environment_id default switching"
+    );
+    assert!(
+        !tool
+            .description
+            .contains("does not change the default execution environment"),
+        "env_switch description must not preserve the old explicit-only contract"
+    );
+    assert!(
+        tool.description
+            .contains("Raw ssh/docker commands remain appropriate"),
+        "env_switch description should preserve legitimate raw ssh/docker uses"
+    );
+    assert!(
+        tool.description.contains("base=\"ssh:example-host\"")
+            && tool.description.contains("extend={\"type\":\"docker\""),
+        "env_switch description should show nested SSH-to-Docker addressing"
+    );
+    assert!(
+        tool.description
+            .contains("never to the local workspace path"),
+        "env_switch description should discourage passing local cwd as remote cwd"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -108,28 +152,28 @@ fn docker_launcher_shell_argv_structure() {
 fn ssh_launcher_shell_argv_structure() {
     let launcher = RemoteLauncher::ssh("user@remote");
     let argv = launcher.shell_argv("echo hello");
-    // SSH: ["ssh", "-T", "-q", "-o", "BatchMode=yes", "-o",
-    //       "StrictHostKeyChecking=accept-new", "-o", "LogLevel=ERROR",
-    //       "--", "<host>", shell_join(["sh", "-c", "<script>"])]
+    // SSH: ["ssh", <hardening flags>, "--", "<host>",
+    //       shell_join(["sh", "-c", "<script>"])]
     // The hardening flags suppress password prompts, banners and MOTD.
     // The "--" separator prevents host names starting with "-" from being
     // misinterpreted as SSH flags.
     assert_eq!(argv[0], "ssh");
-    assert_eq!(argv[1], "-T");
-    assert_eq!(argv[2], "-q");
-    assert_eq!(argv[3], "-o");
-    assert_eq!(argv[4], "BatchMode=yes");
-    assert_eq!(argv[5], "-o");
-    assert_eq!(argv[6], "StrictHostKeyChecking=accept-new");
-    assert_eq!(argv[7], "-o");
-    assert_eq!(argv[8], "LogLevel=ERROR");
-    assert_eq!(argv[9], "--");
-    assert_eq!(argv[10], "user@remote");
+    assert!(argv.contains(&"-T".to_string()));
+    assert!(argv.contains(&"-q".to_string()));
+    assert!(argv.contains(&"BatchMode=yes".to_string()));
+    assert!(argv.contains(&"StrictHostKeyChecking=accept-new".to_string()));
+    assert!(argv.contains(&"LogLevel=ERROR".to_string()));
+    assert!(argv.contains(&"ConnectTimeout=20".to_string()));
+    let separator = argv
+        .iter()
+        .position(|arg| arg == "--")
+        .expect("ssh argv should include -- separator");
+    assert_eq!(argv[separator + 1], "user@remote");
     // The last element contains the quoted shell invocation.
+    let script_arg = argv.last().expect("ssh script argument");
     assert!(
-        argv[11].starts_with("'sh'"),
-        "expected ssh argv[11] to start with `'sh'`, got: {:?}",
-        argv[11]
+        script_arg.starts_with("'sh'"),
+        "expected ssh script arg to start with `'sh'`, got: {script_arg:?}",
     );
 }
 
@@ -208,19 +252,46 @@ fn posix_single_quote_handles_spaces() {
 /// the literal cwd string unquoted when a caller-supplied cwd is used.
 #[test]
 fn mkdir_script_quotes_caller_supplied_cwd() {
-    // Simulate what handle_remote_switch does when explicit_cwd is Some.
     let evil_cwd = "/workspace/project;rm -rf /";
-    let script = format!("mkdir -p {}", posix_single_quote(evil_cwd));
+    let script = resolve_remote_cwd_script(Some(evil_cwd));
     // The complete script must equal the expected quoted form exactly.
     assert_eq!(
-        script, "mkdir -p '/workspace/project;rm -rf /'",
+        script,
+        "_codex_cwd='/workspace/project;rm -rf /'\nmkdir -p -- \"$_codex_cwd\" && cd -P -- \"$_codex_cwd\" && printf '%s' \"$PWD\"",
         "expected exactly the quoted script"
     );
     // Strip the quoted argument; nothing dangerous should be left bare.
     let remainder = script.replace("'/workspace/project;rm -rf /'", "");
-    assert_eq!(
-        remainder, "mkdir -p ",
+    assert!(
+        !remainder.contains(";rm -rf /"),
         "no bare metacharacters after removing quoted arg; got: {remainder:?}"
+    );
+}
+
+#[test]
+fn remote_cwd_script_uses_remote_home_when_omitted() {
+    let script = resolve_remote_cwd_script(None);
+    assert_eq!(
+        script,
+        "_codex_cwd=\"$HOME\"\nmkdir -p -- \"$_codex_cwd\" && cd -P -- \"$_codex_cwd\" && printf '%s' \"$PWD\""
+    );
+}
+
+#[test]
+fn remote_cwd_script_expands_tilde_against_remote_home() {
+    let script = resolve_remote_cwd_script(Some("~"));
+    assert_eq!(
+        script,
+        "_codex_cwd=\"$HOME\"\nmkdir -p -- \"$_codex_cwd\" && cd -P -- \"$_codex_cwd\" && printf '%s' \"$PWD\""
+    );
+}
+
+#[test]
+fn remote_cwd_script_expands_tilde_prefix_against_remote_home() {
+    let script = resolve_remote_cwd_script(Some("~/work dir/it's"));
+    assert_eq!(
+        script,
+        "_codex_cwd=\"$HOME\"/'work dir/it'\\''s'\nmkdir -p -- \"$_codex_cwd\" && cd -P -- \"$_codex_cwd\" && printf '%s' \"$PWD\""
     );
 }
 
@@ -228,25 +299,26 @@ fn mkdir_script_quotes_caller_supplied_cwd() {
 // Relative mode: pure launcher-level logic (no network / docker required)
 // ---------------------------------------------------------------------------
 
-/// Relative mode: base="ssh:dgx" + extend=docker:c → id "ssh:dgx>docker:c"
+/// Relative mode: base="ssh:hostname" + extend=docker:container-name
+/// produces id "ssh:hostname>docker:container-name".
 #[test]
 fn relative_mode_base_plus_extend_produces_correct_hops() {
-    let base = RemoteLauncher::from_id("ssh:dgx").expect("parse base");
+    let base = RemoteLauncher::from_id("ssh:hostname").expect("parse base");
     let extended = base.with_appended_hop(Hop::Docker {
-        container: "c".to_string(),
+        container: "container-name".to_string(),
     });
-    assert_eq!(extended.id(), "ssh:dgx>docker:c");
+    assert_eq!(extended.id(), "ssh:hostname>docker:container-name");
     assert_eq!(extended.hops.len(), 2);
     assert_eq!(
         extended.hops[0],
         Hop::Ssh {
-            host: "dgx".to_string()
+            host: "hostname".to_string()
         }
     );
     assert_eq!(
         extended.hops[1],
         Hop::Docker {
-            container: "c".to_string()
+            container: "container-name".to_string()
         }
     );
 }
@@ -254,11 +326,14 @@ fn relative_mode_base_plus_extend_produces_correct_hops() {
 /// Relative mode starting from a two-hop base appends a third hop correctly.
 #[test]
 fn relative_mode_three_hop_chain() {
-    let base = RemoteLauncher::from_id("ssh:bastion>ssh:dgx").expect("parse base");
+    let base = RemoteLauncher::from_id("ssh:jump-host>ssh:hostname").expect("parse base");
     let extended = base.with_appended_hop(Hop::Docker {
-        container: "ml-box".to_string(),
+        container: "container-name".to_string(),
     });
-    assert_eq!(extended.id(), "ssh:bastion>ssh:dgx>docker:ml-box");
+    assert_eq!(
+        extended.id(),
+        "ssh:jump-host>ssh:hostname>docker:container-name"
+    );
     assert_eq!(extended.hops.len(), 3);
 }
 
@@ -525,4 +600,341 @@ fn environment_manager_metadata_overwrite() {
         .expect("metadata must be present");
     assert_eq!(meta.cwd, "/new");
     assert_eq!(meta.shell.as_deref(), Some("/bin/zsh"));
+}
+
+#[test]
+fn environment_manager_thread_metadata_prefers_requested_thread_order() {
+    let manager = EnvironmentManager::without_environments();
+    manager.set_thread_environment_metadata(
+        "child".to_string(),
+        "ssh:shared".to_string(),
+        EnvironmentMetadata {
+            cwd: "/child".to_string(),
+            shell: Some("/bin/sh".to_string()),
+        },
+    );
+    manager.set_thread_environment_metadata(
+        "parent".to_string(),
+        "ssh:shared".to_string(),
+        EnvironmentMetadata {
+            cwd: "/parent".to_string(),
+            shell: Some("/bin/bash".to_string()),
+        },
+    );
+
+    let metadata = manager
+        .get_thread_environment_metadata_for_keys(
+            &["child".to_string(), "parent".to_string()],
+            "ssh:shared",
+        )
+        .expect("thread metadata");
+
+    assert_eq!(
+        metadata,
+        EnvironmentMetadata {
+            cwd: "/child".to_string(),
+            shell: Some("/bin/sh".to_string()),
+        }
+    );
+}
+
+#[tokio::test]
+async fn local_switch_records_status_and_clears_remote_cursor() {
+    let (session, turn) = crate::session::tests::make_session_and_context().await;
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+    let thread_key = session.thread_id.to_string();
+    session
+        .services
+        .environment_manager
+        .set_last_launcher(thread_key.clone(), RemoteLauncher::ssh("hostname"));
+
+    handle_local_switch(&session, &turn, None)
+        .await
+        .expect("local switch should succeed");
+
+    assert!(
+        session
+            .services
+            .environment_manager
+            .get_last_launcher(&thread_key)
+            .is_none()
+    );
+    assert_eq!(
+        session
+            .services
+            .environment_manager
+            .get_last_environment_id(&thread_key)
+            .as_deref(),
+        Some(codex_exec_server::LOCAL_ENVIRONMENT_ID)
+    );
+    assert_eq!(
+        session
+            .services
+            .environment_manager
+            .get_thread_environment_ids(&thread_key),
+        vec![codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string()]
+    );
+    let resolved = resolve_tool_environment(&session, &turn, None)
+        .await
+        .expect("omitted environment_id should resolve")
+        .expect("local environment");
+    assert_eq!(
+        resolved.environment_id,
+        codex_exec_server::LOCAL_ENVIRONMENT_ID
+    );
+    assert!(!resolved.environment.is_remote());
+}
+
+#[tokio::test]
+async fn local_switch_rejects_cwd() {
+    let (session, turn) = crate::session::tests::make_session_and_context().await;
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+
+    let result = handle_local_switch(&session, &turn, Some("/tmp".to_string())).await;
+    let err = match result {
+        Ok(_) => panic!("local cwd should be rejected"),
+        Err(err) => err,
+    };
+
+    assert!(
+        err.to_string().contains("omit `cwd`"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn resolve_tool_environment_rejects_dynamic_environment_from_other_thread() {
+    let (session, turn) = crate::session::tests::make_session_and_context().await;
+    let manager = &session.services.environment_manager;
+    manager
+        .upsert_environment("ssh:other".to_string(), "ws://127.0.0.1:9876".to_string())
+        .expect("seed remote environment");
+    manager.record_thread_environment_id("other-thread".to_string(), "ssh:other".to_string());
+    manager.set_thread_environment_metadata(
+        "other-thread".to_string(),
+        "ssh:other".to_string(),
+        EnvironmentMetadata {
+            cwd: "/other".to_string(),
+            shell: None,
+        },
+    );
+
+    let err = resolve_tool_environment(&session, &turn, Some("ssh:other"))
+        .await
+        .expect_err("other thread env should not be visible");
+
+    assert!(
+        err.to_string()
+            .contains("unknown turn environment id `ssh:other`"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn resolve_tool_environment_errors_when_dynamic_metadata_is_missing() {
+    let (session, turn) = crate::session::tests::make_session_and_context().await;
+    let thread_key = session.thread_id.to_string();
+    let manager = &session.services.environment_manager;
+    manager
+        .upsert_environment("ssh:mine".to_string(), "ws://127.0.0.1:9876".to_string())
+        .expect("seed remote environment");
+    manager.record_thread_environment_id(thread_key, "ssh:mine".to_string());
+
+    let err = resolve_tool_environment(&session, &turn, Some("ssh:mine"))
+        .await
+        .expect_err("metadata should be required");
+
+    assert!(
+        err.to_string().contains("missing cwd metadata"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn resolve_tool_environment_uses_env_switch_default_and_explicit_override() {
+    let (session, turn) = crate::session::tests::make_session_and_context().await;
+    let thread_key = session.thread_id.to_string();
+    let manager = &session.services.environment_manager;
+    for (environment_id, cwd, shell) in [
+        ("ssh:mine", "/mine", Some("/bin/bash")),
+        ("docker:other", "/other", Some("/bin/sh")),
+    ] {
+        manager
+            .upsert_environment(
+                environment_id.to_string(),
+                format!(
+                    "ws://127.0.0.1:{}",
+                    if environment_id == "ssh:mine" {
+                        8765
+                    } else {
+                        9876
+                    }
+                ),
+            )
+            .expect("seed remote environment");
+        manager.set_thread_environment_metadata(
+            thread_key.clone(),
+            environment_id.to_string(),
+            EnvironmentMetadata {
+                cwd: cwd.to_string(),
+                shell: shell.map(str::to_string),
+            },
+        );
+        manager.record_thread_environment_id(thread_key.clone(), environment_id.to_string());
+    }
+    manager.set_last_environment_id(thread_key, "ssh:mine".to_string());
+
+    let implicit = resolve_tool_environment(&session, &turn, None)
+        .await
+        .expect("implicit default should resolve")
+        .expect("implicit environment");
+    assert_eq!(implicit.environment_id, "ssh:mine");
+    assert_eq!(implicit.cwd.as_path(), std::path::Path::new("/mine"));
+    assert_eq!(implicit.shell.as_deref(), Some("/bin/bash"));
+    assert!(implicit.environment.is_remote());
+
+    let explicit = resolve_tool_environment(&session, &turn, Some("docker:other"))
+        .await
+        .expect("explicit override should resolve")
+        .expect("explicit environment");
+    assert_eq!(explicit.environment_id, "docker:other");
+    assert_eq!(explicit.cwd.as_path(), std::path::Path::new("/other"));
+
+    let local = resolve_tool_environment(
+        &session,
+        &turn,
+        Some(codex_exec_server::LOCAL_ENVIRONMENT_ID),
+    )
+    .await
+    .expect("explicit local should resolve")
+    .expect("local environment");
+    assert_eq!(
+        local.environment_id,
+        codex_exec_server::LOCAL_ENVIRONMENT_ID
+    );
+    assert!(!local.environment.is_remote());
+}
+
+#[tokio::test]
+async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot() {
+    let (session, mut turn) = crate::session::tests::make_session_and_context().await;
+    let thread_key = session.thread_id.to_string();
+    let manager = &session.services.environment_manager;
+    let environment = Arc::new(
+        codex_exec_server::Environment::create_for_tests(Some("ws://127.0.0.1:8765".to_string()))
+            .expect("remote environment"),
+    );
+    manager
+        .upsert_environment("ssh:mine".to_string(), "ws://127.0.0.1:8765".to_string())
+        .expect("seed remote environment");
+    turn.environments
+        .turn_environments
+        .push(crate::session::turn_context::TurnEnvironment {
+            environment_id: "ssh:mine".to_string(),
+            environment,
+            cwd: AbsolutePathBuf::from_absolute_path("/old").expect("old cwd"),
+            shell: Some("/bin/bash".to_string()),
+        });
+    manager.set_thread_environment_metadata(
+        thread_key.clone(),
+        "ssh:mine".to_string(),
+        EnvironmentMetadata {
+            cwd: "/new".to_string(),
+            shell: Some("/bin/sh".to_string()),
+        },
+    );
+    manager.record_thread_environment_id(thread_key.clone(), "ssh:mine".to_string());
+    manager.set_last_environment_id(thread_key, "ssh:mine".to_string());
+
+    let implicit = resolve_tool_environment(&session, &turn, None)
+        .await
+        .expect("implicit default should resolve")
+        .expect("implicit environment");
+    assert_eq!(implicit.cwd.as_path(), std::path::Path::new("/new"));
+    assert_eq!(implicit.shell.as_deref(), Some("/bin/sh"));
+
+    let explicit = resolve_tool_environment(&session, &turn, Some("ssh:mine"))
+        .await
+        .expect("explicit environment should resolve")
+        .expect("explicit environment");
+    assert_eq!(explicit.cwd.as_path(), std::path::Path::new("/old"));
+    assert_eq!(explicit.shell.as_deref(), Some("/bin/bash"));
+}
+
+#[tokio::test]
+async fn env_switch_thread_keys_include_parent_after_current_thread() {
+    let (session, mut turn) = crate::session::tests::make_session_and_context().await;
+    let parent_thread_id = ThreadId::new();
+    turn.parent_thread_id = Some(parent_thread_id);
+
+    assert_eq!(
+        environment_thread_keys(&session, &turn),
+        vec![session.thread_id.to_string(), parent_thread_id.to_string()]
+    );
+}
+
+#[test]
+fn validate_addressing_mode_rejects_conflicting_modes() {
+    let args = EnvSwitchArgs {
+        target: Some("ssh".to_string()),
+        container: None,
+        host: Some("example-host".to_string()),
+        cwd: None,
+        hops: Some(vec![HopArg {
+            hop_type: "docker".to_string(),
+            host: None,
+            container: Some("example-container".to_string()),
+        }]),
+        base: None,
+        extend: None,
+    };
+
+    let err = validate_addressing_mode(&args).expect_err("conflicting modes should fail");
+    assert!(
+        err.to_string().contains("mutually exclusive"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn validate_addressing_mode_rejects_base_without_extend() {
+    let args = EnvSwitchArgs {
+        target: Some("ssh".to_string()),
+        container: None,
+        host: Some("example-host".to_string()),
+        cwd: None,
+        hops: None,
+        base: Some("ssh:base".to_string()),
+        extend: None,
+    };
+
+    let err = validate_addressing_mode(&args).expect_err("base without extend should fail");
+    assert!(
+        err.to_string().contains("only valid with relative mode"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn implicit_base_launcher_does_not_fall_back_to_parent_after_local_switch() {
+    let (session, mut turn) = crate::session::tests::make_session_and_context().await;
+    let parent_thread_id = ThreadId::new();
+    let parent_key = parent_thread_id.to_string();
+    let current_key = session.thread_id.to_string();
+    turn.parent_thread_id = Some(parent_thread_id);
+    session
+        .services
+        .environment_manager
+        .set_last_launcher(parent_key, RemoteLauncher::ssh("hostname"));
+    session
+        .services
+        .environment_manager
+        .set_last_environment_id(
+            current_key,
+            codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
+        );
+
+    assert_eq!(implicit_base_launcher(&session, &turn), None);
 }
