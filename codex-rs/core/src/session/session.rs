@@ -9,6 +9,7 @@ use crate::agents_md_manager::AgentsMdManager;
 use crate::config::ConstraintError;
 use crate::environment_selection::ThreadEnvironments;
 use crate::environment_selection::TurnEnvironmentSnapshot;
+use crate::environment_selection::TurnEnvironmentState;
 use crate::hook_mcp_executor::CoreHookMcpExecutor;
 use crate::responses_metadata::CodexResponsesMetadata;
 use crate::responses_metadata::CodexResponsesRequestKind;
@@ -561,6 +562,9 @@ async fn warm_plugins_and_skills_for_session_init(
     turn_environments: &TurnEnvironmentSnapshot,
     extensions: &codex_extension_api::ExtensionRegistry<Config>,
 ) -> Vec<SkillError> {
+    let fs = turn_environments
+        .local()
+        .map(|environment| environment.environment.get_filesystem());
     let plugins_input = config.plugins_config_input();
     let plugin_outcome = plugins_manager.plugins_for_config(&plugins_input).await;
     if config.features.enabled(Feature::SkipHostSkillDiscovery)
@@ -569,7 +573,6 @@ async fn warm_plugins_and_skills_for_session_init(
         return Vec::new();
     }
 
-    let fs = turn_environments.primary_filesystem();
     let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
     let plugin_skill_snapshots = plugins_manager.plugin_skill_snapshots_for_config(&plugins_input);
     let skills_input = skills_load_input_from_config(config.as_ref(), effective_skill_roots)
@@ -1210,6 +1213,20 @@ impl Session {
                 &session_configuration.inferred_environment_config(),
             );
             let resolved_environments = turn_environments.snapshot().await;
+            let instruction_environments = TurnEnvironmentSnapshot {
+                environments: resolved_environments
+                    .environments
+                    .iter()
+                    .filter(|environment| {
+                        matches!(
+                            environment,
+                            TurnEnvironmentState::Ready(environment)
+                                if !environment.environment.is_remote()
+                        )
+                    })
+                    .cloned()
+                    .collect(),
+            };
             let agents_md_manager = Arc::new(AgentsMdManager::new(user_instructions));
             let plugin_skill_warmup = warm_plugins_and_skills_for_session_init(
                 Arc::clone(&config),
@@ -1229,7 +1246,10 @@ impl Session {
                         otel.name = "session_init.thread_name_lookup",
                     ));
             let (agents_md_result, plugin_skill_errors, thread_name) = tokio::join!(
-                agents_md_manager.refresh(config.as_ref(), &resolved_environments),
+                agents_md_manager.refresh(
+                    config.as_ref(),
+                    &instruction_environments,
+                ),
                 plugin_skill_warmup,
                 thread_name_lookup,
             );
