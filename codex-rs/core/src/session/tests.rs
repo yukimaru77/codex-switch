@@ -6257,6 +6257,49 @@ async fn turn_environments_set_primary_environment() {
 }
 
 #[tokio::test]
+async fn remote_primary_environment_does_not_retarget_turn_context_cwd() {
+    let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;
+    let local_cwd = session.get_config().await.cwd.clone();
+    let remote_cwd = AbsolutePathBuf::from_absolute_path("/remote/project").expect("remote cwd");
+    session
+        .services
+        .environment_manager
+        .upsert_environment("ssh:mine".to_string(), "ws://127.0.0.1:8765".to_string())
+        .expect("seed remote environment");
+
+    let turn_context = session
+        .new_turn_with_sub_id(
+            "sub-remote".to_string(),
+            SessionSettingsUpdate {
+                environments: Some(TurnEnvironmentSelections {
+                    legacy_fallback_cwd: local_cwd.clone(),
+                    environments: vec![
+                        TurnEnvironmentSelection {
+                            environment_id: "ssh:mine".to_string(),
+                            cwd: remote_cwd.clone(),
+                        },
+                        local(local_cwd.clone()),
+                    ],
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("turn should start");
+
+    let primary_environment = turn_context
+        .environments
+        .primary()
+        .expect("primary environment should be set");
+    assert_eq!(primary_environment.environment_id, "ssh:mine");
+    assert_eq!(primary_environment.cwd, remote_cwd);
+    #[allow(deprecated)]
+    let turn_cwd = turn_context.cwd.clone();
+    assert_eq!(turn_cwd, local_cwd);
+    assert_eq!(turn_context.config.cwd, local_cwd);
+}
+
+#[tokio::test]
 async fn default_turn_does_not_overlay_legacy_fallback_cwd_onto_stored_thread_environments() {
     let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;
     let session_cwd = session.get_config().await.cwd.clone();

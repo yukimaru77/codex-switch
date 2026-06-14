@@ -439,15 +439,13 @@ async fn warm_plugins_and_skills_for_session_init(
     config: Arc<Config>,
     plugins_manager: Arc<PluginsManager>,
     skills_manager: Arc<SkillsManager>,
-    turn_environments: &TurnEnvironmentSnapshot,
 ) -> Vec<SkillError> {
-    let fs = turn_environments.primary_filesystem();
     let plugins_input = config.plugins_config_input();
     let plugin_outcome = plugins_manager.plugins_for_config(&plugins_input).await;
     let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
     let skills_input = skills_load_input_from_config(config.as_ref(), effective_skill_roots);
     skills_manager
-        .skills_for_config(&skills_input, fs)
+        .skills_for_config(&skills_input, None)
         .await
         .errors
 }
@@ -622,6 +620,15 @@ impl Session {
             otel.name = "session_init.auth_mcp",
         ));
 
+        let plugin_and_skill_warmup_fut = warm_plugins_and_skills_for_session_init(
+            Arc::clone(&config),
+            Arc::clone(&plugins_manager),
+            Arc::clone(&skills_manager),
+        )
+        .instrument(info_span!(
+            "session_init.plugin_skill_warmup",
+            otel.name = "session_init.plugin_skill_warmup",
+        ));
         // Join all independent futures.
         let (
             thread_persistence_result,
@@ -819,23 +826,16 @@ impl Session {
             ));
             turn_environments.update_selections(session_configuration.environment_selections());
             let resolved_environments = turn_environments.snapshot().await;
+            let instruction_environments = TurnEnvironmentSnapshot {
+                turn_environments: resolved_environments.local().cloned().into_iter().collect(),
+            };
             session_configuration.loaded_agents_md = load_project_instructions(
                 config.as_ref(),
                 user_instructions,
-                &resolved_environments,
+                &instruction_environments,
             )
             .await;
-            let plugin_skill_errors = warm_plugins_and_skills_for_session_init(
-                Arc::clone(&config),
-                Arc::clone(&plugins_manager),
-                Arc::clone(&skills_manager),
-                &resolved_environments,
-            )
-            .instrument(info_span!(
-                "session_init.plugin_skill_warmup",
-                otel.name = "session_init.plugin_skill_warmup",
-            ))
-            .await;
+            let plugin_skill_errors = plugin_and_skill_warmup_fut.await;
             for err in &plugin_skill_errors {
                 error!(
                     "failed to load skill {}: {}",

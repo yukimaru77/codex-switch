@@ -751,10 +751,9 @@ impl Session {
         multi_agent_runtime: TurnMultiAgentRuntime,
     ) -> Arc<TurnContext> {
         let turn_environments = self.services.turn_environments.snapshot().await;
-        let primary_turn_environment = turn_environments.primary().cloned();
-        let cwd = primary_turn_environment
-            .as_ref()
-            .map(|turn_environment| turn_environment.cwd().clone())
+        let cwd = turn_environments
+            .single_local_environment_cwd()
+            .cloned()
             .unwrap_or_else(|| session_configuration.cwd().clone());
         let per_turn_config = Self::build_per_turn_config(&session_configuration, cwd.clone());
         {
@@ -789,12 +788,10 @@ impl Session {
             .await;
         let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
         let skills_input = skills_load_input_from_config(&per_turn_config, effective_skill_roots);
-        let fs = primary_turn_environment
-            .map(|turn_environment| turn_environment.environment.get_filesystem());
         let skills_outcome = Arc::new(
             self.services
                 .skills_manager
-                .skills_for_config(&skills_input, fs)
+                .skills_for_config(&skills_input, None)
                 .await,
         );
         let mut turn_context: TurnContext = Self::make_turn_context(

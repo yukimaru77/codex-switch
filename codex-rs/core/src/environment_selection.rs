@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+#[cfg(test)]
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
