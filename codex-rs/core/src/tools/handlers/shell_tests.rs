@@ -384,3 +384,16 @@ async fn build_post_tool_use_payload_uses_tool_output_wire_value() {
         })
     );
 }
+
+#[test]
+fn append_advisory_to_content_extends_shell_command_model_output() {
+    let text = super::append_advisory_to_content(
+        "shell-output".to_string(),
+        Some("Advisory: use env_switch for continued remote work.".to_string()),
+    );
+
+    assert_eq!(
+        text,
+        "shell-output\nAdvisory: use env_switch for continued remote work."
+    );
+}
