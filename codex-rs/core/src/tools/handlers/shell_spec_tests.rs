@@ -111,6 +111,35 @@ fn exec_command_tool_can_hide_shell_parameter() {
 }
 
 #[test]
+fn exec_command_tool_with_environment_id_guides_ongoing_remote_work_to_env_switch() {
+    let tool = create_exec_command_tool_with_environment_id(
+        CommandToolOptions {
+            allow_login_shell: true,
+            exec_permission_approvals_enabled: false,
+        },
+        /*include_environment_id*/ true,
+        /*include_shell_parameter*/ true,
+    );
+    let ToolSpec::Function(tool) = tool else {
+        panic!("expected function tool");
+    };
+
+    assert!(
+        tool.description
+            .contains("continue on an SSH host, inside a Docker container")
+    );
+    assert!(
+        tool.description.contains("first use env_switch")
+            && tool
+                .description
+                .contains("without repeating raw ssh/docker wrappers")
+            && tool
+                .description
+                .contains("Continue with raw ssh/docker only")
+    );
+}
+
+#[test]
 fn write_stdin_tool_matches_expected_spec() {
     let tool = create_write_stdin_tool();
 
@@ -227,6 +256,7 @@ Examples of valid command strings:
     } else {
         r#"Runs a shell command and returns its output.
 - This legacy tool is not environment-aware and does not accept `environment_id`; use `exec_command` for env_switch targets.
+- If available, use env_switch before continuing work on an SSH host, inside Docker, or inside a Docker container on an SSH host; do not keep repeating raw ssh/docker wrappers for multi-step remote work unless env_switch is unavailable or cannot register the target.
 - Always set the `workdir` param when using the shell_command function. Do not use `cd` unless absolutely necessary."#
             .to_string()
     };
