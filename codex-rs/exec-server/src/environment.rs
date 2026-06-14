@@ -74,7 +74,7 @@ const MAX_ENV_METADATA_ENTRIES: usize = 64;
 /// Stored inside [`EnvironmentManager`] so the data is accessible to
 /// sub-agents that share the same `Arc<EnvironmentManager>` but run in a
 /// separate [`Session`] (and therefore have separate `SessionServices`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentMetadata {
     /// Working directory that `env_switch` created / confirmed exists on the
     /// remote host.  Expressed as a raw absolute-path string (the caller is
@@ -84,6 +84,22 @@ pub struct EnvironmentMetadata {
     /// reported by the probe script.  `None` when the remote probe did not
     /// emit a `CODEX_SHELL:` line.
     pub shell: Option<String>,
+}
+
+/// Side-effect-free snapshot of an environment registry entry.
+///
+/// This intentionally avoids calling [`Environment::info`], because status
+/// checks should not connect to remote exec-servers just to list known ids.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentSnapshot {
+    /// Stable id used by tool calls as `environment_id`.
+    pub environment_id: String,
+    /// True when the environment is backed by a remote exec-server transport.
+    pub is_remote: bool,
+    /// True when this is the manager's configured default environment.
+    pub is_default: bool,
+    /// Global metadata recorded for this environment id, if any.
+    pub metadata: Option<EnvironmentMetadata>,
 }
 
 /// Owns the execution/filesystem environments available to the Codex runtime.
@@ -114,6 +130,12 @@ pub struct EnvironmentManager {
     ///
     /// See [`MAX_ENV_METADATA_ENTRIES`] for the soft size cap.
     env_metadata: Mutex<HashMap<String, EnvironmentMetadata>>,
+    /// Per-thread metadata for dynamically-registered environments.
+    ///
+    /// The same environment id can be registered by different threads with
+    /// different cwd/shell metadata.  Keep this map thread-scoped so a shared
+    /// manager does not let one thread overwrite another thread's cwd.
+    thread_env_metadata: Mutex<HashMap<String, HashMap<String, EnvironmentMetadata>>>,
     /// The most-recently registered [`RemoteLauncher`] per session-thread id
     /// string (opaque key, typically `ThreadId::to_string()`).
     ///
@@ -124,6 +146,15 @@ pub struct EnvironmentManager {
     ///
     /// See [`MAX_ENV_METADATA_ENTRIES`] for the soft size cap.
     last_launcher: Mutex<HashMap<String, RemoteLauncher>>,
+    /// The most-recent environment id successfully selected via `env_switch`
+    /// per session-thread id. Unlike [`Self::last_launcher`], this includes
+    /// `local`, so status tools can report what the model last asked for.
+    last_environment_id: Mutex<HashMap<String, String>>,
+    /// Environment ids registered or explicitly selected via `env_switch`,
+    /// keyed by session-thread id. Used by status tools to show only
+    /// thread-relevant dynamic environments instead of the whole shared
+    /// registry.
+    thread_environment_ids: Mutex<HashMap<String, Vec<String>>>,
 }
 
 /// Information supplied by the environment owner when a deferred environment is ready.
@@ -183,7 +214,10 @@ impl EnvironmentManager {
             local_environment: Some(Arc::new(Environment::default_for_tests())),
             local_runtime_paths: None,
             env_metadata: Mutex::new(HashMap::new()),
+            thread_env_metadata: Mutex::new(HashMap::new()),
             last_launcher: Mutex::new(HashMap::new()),
+            last_environment_id: Mutex::new(HashMap::new()),
+            thread_environment_ids: Mutex::new(HashMap::new()),
         }
     }
 
@@ -195,7 +229,10 @@ impl EnvironmentManager {
             local_environment: None,
             local_runtime_paths: None,
             env_metadata: Mutex::new(HashMap::new()),
+            thread_env_metadata: Mutex::new(HashMap::new()),
             last_launcher: Mutex::new(HashMap::new()),
+            last_environment_id: Mutex::new(HashMap::new()),
+            thread_environment_ids: Mutex::new(HashMap::new()),
         }
     }
 
@@ -347,7 +384,10 @@ impl EnvironmentManager {
             local_environment,
             local_runtime_paths,
             env_metadata: Mutex::new(HashMap::new()),
+            thread_env_metadata: Mutex::new(HashMap::new()),
             last_launcher: Mutex::new(HashMap::new()),
+            last_environment_id: Mutex::new(HashMap::new()),
+            thread_environment_ids: Mutex::new(HashMap::new()),
         })
     }
 
@@ -404,6 +444,57 @@ impl EnvironmentManager {
     ) -> Option<EnvironmentObservedStatus> {
         let environment = self.get_environment(environment_id)?;
         Some(environment.status().await)
+    }
+
+    /// Returns a deterministic snapshot of the registered environment ids.
+    ///
+    /// The default environment is listed first when present, followed by the
+    /// remaining environment ids in lexical order. Dynamic metadata is copied
+    /// from the side map populated by `env_switch`.
+    pub fn environment_snapshots(&self) -> Vec<EnvironmentSnapshot> {
+        let default_environment_id = self.default_environment.clone();
+        let mut entries = {
+            let environments = self
+                .environments
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            environments
+                .iter()
+                .map(|(environment_id, environment)| {
+                    (environment_id.clone(), environment.is_remote())
+                })
+                .collect::<Vec<_>>()
+        };
+        let metadata = self
+            .env_metadata
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+
+        entries.sort_by(|(left_id, _), (right_id, _)| {
+            match (
+                default_environment_id.as_ref() == Some(left_id),
+                default_environment_id.as_ref() == Some(right_id),
+            ) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => left_id.cmp(right_id),
+            }
+        });
+
+        entries
+            .into_iter()
+            .map(|(environment_id, is_remote)| {
+                let is_default = default_environment_id.as_deref() == Some(environment_id.as_str());
+                let metadata = metadata.get(&environment_id).cloned();
+                EnvironmentSnapshot {
+                    environment_id,
+                    is_remote,
+                    is_default,
+                    metadata,
+                }
+            })
+            .collect()
     }
 
     /// Adds or replaces a named remote environment without changing the
@@ -519,6 +610,49 @@ impl EnvironmentManager {
             .cloned()
     }
 
+    /// Records cwd and shell metadata for one thread's view of an environment.
+    pub fn set_thread_environment_metadata(
+        &self,
+        thread_key: String,
+        environment_id: String,
+        metadata: EnvironmentMetadata,
+    ) {
+        let mut map = self
+            .thread_env_metadata
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if map.len() >= MAX_ENV_METADATA_ENTRIES
+            && !map.contains_key(&thread_key)
+            && let Some(oldest_key) = map.keys().next().cloned()
+        {
+            map.remove(&oldest_key);
+        }
+        let entries = map.entry(thread_key).or_default();
+        if entries.len() >= MAX_ENV_METADATA_ENTRIES
+            && !entries.contains_key(&environment_id)
+            && let Some(oldest_key) = entries.keys().next().cloned()
+        {
+            entries.remove(&oldest_key);
+        }
+        entries.insert(environment_id, metadata);
+    }
+
+    /// Returns metadata for an environment visible through any of the supplied
+    /// thread keys, checking keys in order.
+    pub fn get_thread_environment_metadata_for_keys(
+        &self,
+        thread_keys: &[String],
+        environment_id: &str,
+    ) -> Option<EnvironmentMetadata> {
+        let map = self
+            .thread_env_metadata
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        thread_keys
+            .iter()
+            .find_map(|thread_key| map.get(thread_key)?.get(environment_id).cloned())
+    }
+
     /// Records the most-recently registered [`RemoteLauncher`] for a given
     /// thread key (typically `thread_id.to_string()`).
     ///
@@ -531,10 +665,11 @@ impl EnvironmentManager {
             .last_launcher
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if map.len() >= MAX_ENV_METADATA_ENTRIES && !map.contains_key(&thread_key) {
-            if let Some(oldest_key) = map.keys().next().cloned() {
-                map.remove(&oldest_key);
-            }
+        if map.len() >= MAX_ENV_METADATA_ENTRIES
+            && !map.contains_key(&thread_key)
+            && let Some(oldest_key) = map.keys().next().cloned()
+        {
+            map.remove(&oldest_key);
         }
         map.insert(thread_key, launcher);
     }
@@ -547,6 +682,76 @@ impl EnvironmentManager {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(thread_key)
             .cloned()
+    }
+
+    /// Clears the implicit relative-mode launcher cursor for a thread.
+    pub fn clear_last_launcher(&self, thread_key: &str) {
+        self.last_launcher
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(thread_key);
+    }
+
+    /// Records the most recent environment id selected through `env_switch`.
+    ///
+    /// Tool handlers use this thread-scoped cursor as the effective default
+    /// environment for compatible calls that omit `environment_id`.
+    pub fn set_last_environment_id(&self, thread_key: String, environment_id: String) {
+        let mut map = self
+            .last_environment_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if map.len() >= MAX_ENV_METADATA_ENTRIES
+            && !map.contains_key(&thread_key)
+            && let Some(oldest_key) = map.keys().next().cloned()
+        {
+            map.remove(&oldest_key);
+        }
+        map.insert(thread_key, environment_id);
+    }
+
+    /// Returns the most recent environment id selected through `env_switch`.
+    pub fn get_last_environment_id(&self, thread_key: &str) -> Option<String> {
+        self.last_environment_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(thread_key)
+            .cloned()
+    }
+
+    /// Records that an environment id is relevant to a given thread.
+    ///
+    /// This is used by status tools to list dynamic environments created by
+    /// the current thread (or inherited from a parent thread) without exposing
+    /// unrelated environments from the shared registry.
+    pub fn record_thread_environment_id(&self, thread_key: String, environment_id: String) {
+        let mut map = self
+            .thread_environment_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if map.len() >= MAX_ENV_METADATA_ENTRIES
+            && !map.contains_key(&thread_key)
+            && let Some(oldest_key) = map.keys().next().cloned()
+        {
+            map.remove(&oldest_key);
+        }
+        let ids = map.entry(thread_key).or_default();
+        if !ids.iter().any(|id| id == &environment_id) {
+            if ids.len() >= MAX_ENV_METADATA_ENTRIES {
+                ids.remove(0);
+            }
+            ids.push(environment_id);
+        }
+    }
+
+    /// Returns environment ids recorded for a given thread.
+    pub fn get_thread_environment_ids(&self, thread_key: &str) -> Vec<String> {
+        self.thread_environment_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(thread_key)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Adds or replaces a named remote environment backed by a stdio command
@@ -577,7 +782,7 @@ impl EnvironmentManager {
         };
         let transport = ExecServerTransportParams::StdioCommand {
             command,
-            initialize_timeout: crate::client_api::DEFAULT_REMOTE_EXEC_SERVER_INITIALIZE_TIMEOUT,
+            initialize_timeout: crate::client_api::PROVISIONED_STDIO_INITIALIZE_TIMEOUT,
         };
         let environment =
             Environment::remote_with_transport(transport, self.local_runtime_paths.clone());
@@ -983,6 +1188,7 @@ mod tests {
     use super::Environment;
     use super::EnvironmentManager;
     use super::EnvironmentObservedStatus;
+    use super::EnvironmentMetadata;
     use super::LOCAL_ENVIRONMENT_ID;
     use super::REMOTE_ENVIRONMENT_ID;
     use super::noise_environment_config_from_values;
@@ -1349,6 +1555,93 @@ mod tests {
         let manager = EnvironmentManager::default_for_tests();
 
         assert!(manager.get_environment("does-not-exist").is_none());
+    }
+
+    #[tokio::test]
+    async fn environment_manager_snapshots_default_first_and_include_metadata() {
+        let manager = EnvironmentManager::default_for_tests();
+        manager
+            .upsert_environment("remote-b".to_string(), "ws://127.0.0.1:8765".to_string())
+            .expect("remote-b environment");
+        manager
+            .upsert_environment("remote-a".to_string(), "ws://127.0.0.1:9876".to_string())
+            .expect("remote-a environment");
+        manager.set_environment_metadata(
+            "remote-a".to_string(),
+            EnvironmentMetadata {
+                cwd: "/workspace".to_string(),
+                shell: Some("/bin/bash".to_string()),
+            },
+        );
+
+        let snapshots = manager.environment_snapshots();
+
+        assert_eq!(
+            snapshots
+                .iter()
+                .map(|snapshot| snapshot.environment_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![LOCAL_ENVIRONMENT_ID, "remote-a", "remote-b"]
+        );
+        assert!(snapshots[0].is_default);
+        assert!(!snapshots[0].is_remote);
+        assert!(!snapshots[1].is_default);
+        assert!(snapshots[1].is_remote);
+        assert_eq!(
+            snapshots[1].metadata,
+            Some(EnvironmentMetadata {
+                cwd: "/workspace".to_string(),
+                shell: Some("/bin/bash".to_string()),
+            })
+        );
+        assert_eq!(snapshots[2].metadata, None);
+    }
+
+    #[tokio::test]
+    async fn environment_manager_last_environment_id_roundtrip() {
+        let manager = EnvironmentManager::without_environments();
+
+        assert!(manager.get_last_environment_id("thread-123").is_none());
+        manager.set_last_environment_id("thread-123".to_string(), LOCAL_ENVIRONMENT_ID.to_string());
+        assert_eq!(
+            manager.get_last_environment_id("thread-123").as_deref(),
+            Some(LOCAL_ENVIRONMENT_ID)
+        );
+        manager.set_last_environment_id("thread-123".to_string(), "remote-a".to_string());
+        assert_eq!(
+            manager.get_last_environment_id("thread-123").as_deref(),
+            Some("remote-a")
+        );
+        assert!(manager.get_last_environment_id("thread-456").is_none());
+    }
+
+    #[tokio::test]
+    async fn environment_manager_thread_environment_ids_roundtrip() {
+        let manager = EnvironmentManager::without_environments();
+
+        assert!(manager.get_thread_environment_ids("thread-123").is_empty());
+        manager.record_thread_environment_id("thread-123".to_string(), "remote-a".to_string());
+        manager.record_thread_environment_id("thread-123".to_string(), "remote-b".to_string());
+        manager.record_thread_environment_id("thread-123".to_string(), "remote-a".to_string());
+
+        assert_eq!(
+            manager.get_thread_environment_ids("thread-123"),
+            vec!["remote-a".to_string(), "remote-b".to_string()]
+        );
+        assert!(manager.get_thread_environment_ids("thread-456").is_empty());
+    }
+
+    #[tokio::test]
+    async fn environment_manager_clear_last_launcher() {
+        let manager = EnvironmentManager::without_environments();
+        manager.set_last_launcher(
+            "thread-123".to_string(),
+            crate::provision::RemoteLauncher::ssh("hostname"),
+        );
+
+        assert!(manager.get_last_launcher("thread-123").is_some());
+        manager.clear_last_launcher("thread-123");
+        assert!(manager.get_last_launcher("thread-123").is_none());
     }
 
     #[tokio::test]
