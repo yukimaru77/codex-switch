@@ -51,6 +51,7 @@ use codex_protocol::request_permissions::RequestPermissionsResponse;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 
 use crate::context_manager::is_user_turn_boundary;
+use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_protocol::dynamic_tools::DynamicToolResponse;
 use codex_protocol::mcp::RequestId as ProtocolRequestId;
 use codex_rmcp_client::ElicitationAction;
@@ -177,12 +178,36 @@ async fn thread_settings_update(
 }
 
 pub(super) async fn thread_settings_applied_event(sess: &Session) -> EventMsg {
-    let snapshot = {
+    let (snapshot, active_environment_id) = {
         let state = sess.state.lock().await;
-        state.session_configuration.thread_config_snapshot()
+        let snapshot = state.session_configuration.thread_config_snapshot();
+        let parent_thread_id = state.session_configuration.parent_thread_id;
+        let env_switch_default_environment_id = [Some(sess.thread_id), parent_thread_id]
+            .into_iter()
+            .flatten()
+            .find_map(|thread_id| {
+                sess.services
+                    .environment_manager
+                    .get_last_environment_id(&thread_id.to_string())
+            });
+        // Report the environment that compatible tools use when environment_id
+        // is omitted: env_switch's current thread/parent cursor first, then the
+        // first sticky configured environment. The local environment maps to no
+        // badge; non-local ids surface as a status badge.
+        let active_environment_id = env_switch_default_environment_id
+            .or_else(|| {
+                snapshot
+                    .environment_selections()
+                    .first()
+                    .map(|sel| sel.environment_id.clone())
+            })
+            .filter(|id| id != LOCAL_ENVIRONMENT_ID);
+        (snapshot, active_environment_id)
     };
+    let mut thread_settings = snapshot.into_thread_settings_snapshot();
+    thread_settings.active_environment_id = active_environment_id;
     EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent {
-        thread_settings: snapshot.into_thread_settings_snapshot(),
+        thread_settings,
     })
 }
 
