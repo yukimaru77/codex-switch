@@ -497,7 +497,9 @@ impl ChatWidget {
         let cwd_changed = self.config.cwd != settings.cwd;
         self.apply_thread_settings_cwd(settings.cwd.clone());
         // Update the status badge for the non-local default execution target.
-        // "docker:container" → "🐳 container", "ssh:host" → "🔗 host",
+        // "docker:container" → "🐳 container",
+        // "ssh:host" → "🔗 host",
+        // "ssh:host>docker:container" → "🐳 host>container",
         // None (local environment) → no badge.
         self.env_switch_badge = settings
             .active_environment_id
@@ -772,22 +774,45 @@ impl ChatWidget {
 ///
 /// - `"docker:<name>"` → `"🐳 <name>"`
 /// - `"ssh:<host>"` → `"🔗 <host>"`
+/// - `"ssh:host>docker:name"` → `"🐳 host>name"`
 /// - Any other non-empty value is returned as-is so future environment types
 ///   surface something rather than nothing.
 /// - Returns `None` for an empty string so callers can use `Option::and_then`.
 pub(super) fn env_switch_badge_from_environment_id(id: &str) -> Option<String> {
-    if let Some(name) = id.strip_prefix("docker:") {
-        if !name.is_empty() {
-            return Some(format!("🐳 {name}"));
-        }
-    } else if let Some(host) = id.strip_prefix("ssh:") {
-        if !host.is_empty() {
-            return Some(format!("🔗 {host}"));
-        }
-    } else if !id.is_empty() {
-        return Some(id.to_string());
+    if id.is_empty() {
+        return None;
     }
-    None
+
+    let mut final_kind = EnvironmentBadgeKind::Other;
+    let mut display_segments = Vec::new();
+    for segment in id.split('>') {
+        let (kind, display) = badge_segment(segment)?;
+        final_kind = kind;
+        display_segments.push(display);
+    }
+
+    match final_kind {
+        EnvironmentBadgeKind::Docker => Some(format!("🐳 {}", display_segments.join(">"))),
+        EnvironmentBadgeKind::Ssh => Some(format!("🔗 {}", display_segments.join(">"))),
+        EnvironmentBadgeKind::Other => Some(id.to_string()),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EnvironmentBadgeKind {
+    Docker,
+    Ssh,
+    Other,
+}
+
+fn badge_segment(segment: &str) -> Option<(EnvironmentBadgeKind, &str)> {
+    if let Some(name) = segment.strip_prefix("docker:") {
+        return (!name.is_empty()).then_some((EnvironmentBadgeKind::Docker, name));
+    }
+    if let Some(host) = segment.strip_prefix("ssh:") {
+        return (!host.is_empty()).then_some((EnvironmentBadgeKind::Ssh, host));
+    }
+    (!segment.is_empty()).then_some((EnvironmentBadgeKind::Other, segment))
 }
 
 #[cfg(test)]
@@ -808,6 +833,22 @@ mod badge_tests {
         assert_eq!(
             env_switch_badge_from_environment_id("ssh:example-host"),
             Some("🔗 example-host".to_string())
+        );
+    }
+
+    #[test]
+    fn nested_ssh_docker_environment_id_uses_docker_badge() {
+        assert_eq!(
+            env_switch_badge_from_environment_id("ssh:saitou>docker:codex-gpu-worker"),
+            Some("🐳 saitou>codex-gpu-worker".to_string())
+        );
+    }
+
+    #[test]
+    fn nested_ssh_environment_id_uses_link_badge() {
+        assert_eq!(
+            env_switch_badge_from_environment_id("ssh:bastion>ssh:worker"),
+            Some("🔗 bastion>worker".to_string())
         );
     }
 
