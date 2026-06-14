@@ -31,7 +31,7 @@ pub(crate) fn create_exec_command_tool_with_environment_id(
         (
             "workdir".to_string(),
             JsonSchema::string(Some(
-                "Working directory for the command. Defaults to the turn cwd."
+                "Working directory for the command. Defaults to the selected execution environment's cwd."
                     .to_string(),
             )),
         ),
@@ -77,8 +77,10 @@ pub(crate) fn create_exec_command_tool_with_environment_id(
             "environment_id".to_string(),
             JsonSchema::string(Some(
                 "Run this call inside a specific execution target: pass an `environment_id` \
-                 returned by the env_switch tool (e.g. `docker:foo` or `ssh:dgx>docker:c`) to \
-                 execute inside that container/host. Omit it to run on the local host. \
+                 listed by env_status/env_list or returned by env_switch when available \
+                 (e.g. `docker:container-name` or `ssh:hostname>docker:container-name`) \
+                 to execute inside that target. Omit it to use the current default execution \
+                 environment, which env_switch can update when available. \
                  Relative paths resolve against that environment's working directory."
                     .to_string(),
             )),
@@ -206,6 +208,7 @@ Examples of valid command strings:
         )
     } else {
         r#"Runs a shell command and returns its output.
+- This legacy tool is not environment-aware and does not accept `environment_id`; use `exec_command` for env_switch targets.
 - Always set the `workdir` param when using the shell_command function. Do not use `cd` unless absolutely necessary."#
             .to_string()
     };
@@ -236,8 +239,10 @@ pub fn create_request_permissions_tool(description: String) -> ToolSpec {
             "environment_id".to_string(),
             JsonSchema::string(Some(
                 "Run this call inside a specific execution target: pass an `environment_id` \
-                 returned by the env_switch tool (e.g. `docker:foo` or `ssh:dgx>docker:c`) to \
-                 execute inside that container/host. Omit it to run on the local host. \
+                 listed by env_status/env_list or returned by env_switch when available \
+                 (e.g. `docker:container-name` or `ssh:hostname>docker:container-name`) \
+                 to execute inside that target. Omit it to use the current default execution \
+                 environment, which env_switch can update when available. \
                  Relative paths resolve against that environment's working directory."
                     .to_string(),
             )),
@@ -260,7 +265,7 @@ pub fn create_request_permissions_tool(description: String) -> ToolSpec {
 }
 
 pub fn request_permissions_tool_description() -> String {
-    "Request additional filesystem or network permissions from the user and wait for the client to grant a subset of the requested permission profile. Use environment_id to target a specific attached environment; omit it to use the primary environment. Relative filesystem paths resolve against the selected environment cwd. Granted permissions apply automatically to later shell-like commands in the current turn, or for the rest of the session if the client approves them at session scope."
+    "Request additional filesystem or network permissions from the user and wait for the client to grant a subset of the requested permission profile. Use environment_id to target a specific attached environment; omit it to use the current default execution environment, which env_switch can update when available. Relative filesystem paths resolve against the selected environment cwd. Granted permissions apply automatically to later shell-like commands in the current turn, or for the rest of the session if the client approves them at session scope."
         .to_string()
 }
 

@@ -1,5 +1,6 @@
 use pretty_assertions::assert_eq;
 
+use super::canonicalize_exact_version;
 use super::is_dev_version;
 use super::parse_latest_tag_name;
 use crate::provision::VersionPolicy;
@@ -42,12 +43,22 @@ fn parse_tag_name_missing() {
 #[test]
 fn exact_policy_resolves_synchronously() {
     // VersionPolicy::Exact does not hit the network; verify it round-trips.
-    let policy = VersionPolicy::Exact("3.0.0".to_string());
+    let policy = VersionPolicy::Exact("v3.0.0".to_string());
     let rt = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("runtime");
     let v = rt.block_on(policy.resolve()).expect("resolve");
     assert_eq!(v, "3.0.0");
+}
+
+#[test]
+fn exact_policy_rejects_invalid_versions() {
+    for version in ["", "  ", "../1.2.3", "1.2.3/bad", "1.2.3 bad"] {
+        assert!(
+            canonicalize_exact_version(version).is_err(),
+            "version should be invalid: {version:?}"
+        );
+    }
 }
 
 #[test]
@@ -74,8 +85,9 @@ fn latest_policy_never_reuses_offline() {
 }
 
 #[test]
-fn host_version_dev_build_reuses_any_existing() {
-    // The test binary's CARGO_PKG_VERSION is the dev placeholder "0.0.0", so a
-    // dev host reuses whatever codex is already on the remote (no Latest call).
-    assert!(VersionPolicy::HostVersion.is_satisfied_by_existing("0.131.0"));
+fn host_version_dev_build_does_not_reuse_before_resolving_latest() {
+    // The test binary's CARGO_PKG_VERSION is the dev placeholder "0.0.0"; a
+    // dev host must resolve Latest before deciding whether the managed remote
+    // binary is current enough to reuse.
+    assert!(!VersionPolicy::HostVersion.is_satisfied_by_existing("0.131.0"));
 }
