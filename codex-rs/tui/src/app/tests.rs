@@ -1199,6 +1199,30 @@ async fn replayed_thread_settings_update_restores_env_switch_badge() {
     );
 }
 
+#[tokio::test]
+async fn replayed_snapshot_restores_env_switch_badge_after_session_refresh_rebases_buffer() {
+    let mut app = make_test_app().await;
+    let thread_id = ThreadId::new();
+    let mut store = ThreadEventStore::new_with_session(
+        /*capacity*/ 4,
+        test_thread_session(thread_id, test_path_buf("/tmp/local-project")),
+        Vec::new(),
+    );
+    store.push_notification(env_switch_thread_settings_updated(thread_id));
+    store.rebase_buffer_after_session_refresh();
+
+    app.chat_widget.setup_status_line(
+        vec![crate::bottom_pane::StatusLineItem::CurrentDir],
+        /*use_theme_colors*/ true,
+    );
+    app.replay_thread_snapshot(store.snapshot(), /*resume_restored_queue*/ false);
+
+    assert_eq!(
+        app.chat_widget.status_line_text(),
+        Some("🔗 example-host".to_string())
+    );
+}
+
 fn env_switch_thread_settings_updated(thread_id: ThreadId) -> ServerNotification {
     ServerNotification::ThreadSettingsUpdated(ThreadSettingsUpdatedNotification {
         thread_id: thread_id.to_string(),
