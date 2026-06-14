@@ -38,7 +38,7 @@ fn exec_command_tool_matches_expected_spec() {
         (
             "workdir".to_string(),
             JsonSchema::string(Some(
-                    "Working directory for the command. Defaults to the turn cwd."
+                    "Working directory for the command. Defaults to the selected execution environment's cwd."
                         .to_string(),
                 )),
         ),
@@ -176,8 +176,10 @@ fn request_permissions_tool_includes_full_permission_schema() {
             "environment_id".to_string(),
             JsonSchema::string(Some(
                 "Run this call inside a specific execution target: pass an `environment_id` \
-                 returned by the env_switch tool (e.g. `docker:foo` or `ssh:dgx>docker:c`) to \
-                 execute inside that container/host. Omit it to run on the local host. \
+                 listed by env_status/env_list or returned by env_switch when available \
+                 (e.g. `docker:container-name` or `ssh:hostname>docker:container-name`) \
+                 to execute inside that target. Omit it to use the current default execution \
+                 environment, which env_switch can update when available. \
                  Relative paths resolve against that environment's working directory."
                     .to_string(),
             )),
@@ -224,6 +226,7 @@ Examples of valid command strings:
             + &windows_shell_guidance_description()
     } else {
         r#"Runs a shell command and returns its output.
+- This legacy tool is not environment-aware and does not accept `environment_id`; use `exec_command` for env_switch targets.
 - Always set the `workdir` param when using the shell_command function. Do not use `cd` unless absolutely necessary."#
             .to_string()
     };

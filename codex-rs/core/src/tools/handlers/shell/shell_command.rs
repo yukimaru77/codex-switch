@@ -16,7 +16,6 @@ use crate::tools::context::ToolPayload;
 use crate::tools::context::boxed_tool_output;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
-use crate::tools::handlers::resolve_tool_environment;
 use crate::tools::handlers::resolve_workdir_base_path;
 use crate::tools::handlers::rewrite_function_string_argument;
 use crate::tools::handlers::updated_hook_command;
@@ -198,35 +197,20 @@ impl ShellCommandHandler {
             )));
         };
 
-        // Resolve the environment_id before parsing the full params so that
-        // the cwd used for relative-path resolution comes from the selected
-        // environment rather than the deprecated turn-level cwd.
         let env_args: ShellCommandEnvironmentArgs = parse_arguments(&arguments).unwrap_or_default();
-        let resolved_environment =
-            resolve_tool_environment(&session, turn.as_ref(), env_args.environment_id.as_deref())
-                .await?;
+        if env_args.environment_id.is_some() {
+            return Err(FunctionCallError::RespondToModel(
+                "shell_command does not support environment_id; use exec_command, apply_patch, or view_image for env_switch targets"
+                    .to_string(),
+            ));
+        }
 
-        let base_cwd = resolved_environment
-            .as_ref()
-            .map(|e| e.cwd.clone())
-            .or_else(|| {
-                #[allow(deprecated)]
-                Some(turn.cwd.clone())
-            })
-            .unwrap();
+        #[allow(deprecated)]
+        let base_cwd = turn.cwd.clone();
         let cwd = resolve_workdir_base_path(&arguments, &base_cwd)?;
         let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
         #[allow(deprecated)]
-        let workdir = resolved_environment
-            .as_ref()
-            .map(|e| {
-                params
-                    .workdir
-                    .as_deref()
-                    .filter(|w| !w.is_empty())
-                    .map_or_else(|| e.cwd.clone(), |w| e.cwd.join(w))
-            })
-            .unwrap_or_else(|| turn.resolve_path(params.workdir.clone()));
+        let workdir = turn.resolve_path(params.workdir.clone());
         maybe_emit_implicit_skill_invocation(
             session.as_ref(),
             turn.as_ref(),
@@ -235,33 +219,20 @@ impl ShellCommandHandler {
         )
         .await;
         let prefix_rule = params.prefix_rule.clone();
-        // Use the shell reported by the remote probe when the resolved
-        // environment carries one; fall back to the session's local user shell.
-        let env_shell = resolved_environment
-            .as_ref()
-            .and_then(|e| e.shell.as_deref());
         let mut exec_params = Self::to_exec_params(
             &params,
             session.as_ref(),
             turn.as_ref(),
             session.thread_id,
             turn.config.permissions.allow_login_shell,
-            env_shell,
+            None,
         )?;
-        // Override cwd with the resolved environment's working directory so
-        // that shell commands are launched in the correct remote directory.
+        // Use the parsed local workdir so hooks, sandboxing, and event
+        // emission all agree on the same cwd. shell_command is not
+        // environment-aware.
         exec_params.cwd = workdir.clone();
-        // Derive the shell type for hook metadata from the effective shell.
-        let shell_type = if let Some(shell_path) = env_shell {
-            Some(
-                crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(
-                    shell_path,
-                ))
-                .shell_type,
-            )
-        } else {
-            Some(session.user_shell().shell_type)
-        };
+        // Derive the shell type for hook metadata from the local user shell.
+        let shell_type = Some(session.user_shell().shell_type);
         run_exec_like(RunExecLikeArgs {
             tool_name,
             exec_params,
@@ -275,7 +246,7 @@ impl ShellCommandHandler {
             tracker,
             call_id,
             shell_runtime_backend: self.shell_runtime_backend(),
-            resolved_environment,
+            resolved_environment: None,
         })
         .await
         .map(boxed_tool_output)

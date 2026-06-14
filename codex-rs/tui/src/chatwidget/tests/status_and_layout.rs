@@ -3793,19 +3793,19 @@ async fn env_switch_docker_badge_replaces_cwd_in_status_line() {
     );
 }
 
-/// When `env_switch` moves execution to an SSH host, the status line shows
-/// the SSH badge.
+/// When the default execution target is an SSH host, the status line shows the
+/// SSH badge.
 #[tokio::test]
 async fn env_switch_ssh_badge_replaces_cwd_in_status_line() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     chat.config.tui_status_line = Some(vec!["model".to_string(), "current-dir".to_string()]);
     chat.config.cwd = test_path_buf("/tmp/project").abs();
-    chat.env_switch_badge = Some("🔗 dgx".to_string());
+    chat.env_switch_badge = Some("🔗 example-host".to_string());
     chat.refresh_status_line();
 
     assert_eq!(
         status_line_text(&chat),
-        Some("gpt-5.4 · 🔗 dgx".to_string())
+        Some("gpt-5.4 · 🔗 example-host".to_string())
     );
 }
 

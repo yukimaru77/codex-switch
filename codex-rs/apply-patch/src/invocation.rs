@@ -152,6 +152,11 @@ pub async fn maybe_parse_apply_patch_verified(
     }
 
     match maybe_parse_apply_patch(argv) {
+        MaybeApplyPatch::Body(args) if args.environment_id.is_some() => {
+            MaybeApplyPatchVerified::CorrectnessError(
+                ApplyPatchError::EnvironmentIdInShellInvocation,
+            )
+        }
         MaybeApplyPatch::Body(args) => verify_apply_patch_args(args, cwd, fs, sandbox).await,
         MaybeApplyPatch::ShellParseError(e) => MaybeApplyPatchVerified::ShellParseError(e),
         MaybeApplyPatch::PatchParseError(e) => MaybeApplyPatchVerified::CorrectnessError(e.into()),
@@ -502,6 +507,26 @@ mod tests {
             )
             .await,
             MaybeApplyPatchVerified::CorrectnessError(ApplyPatchError::ImplicitInvocation)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_intercepted_apply_patch_rejects_environment_id_marker() {
+        let patch =
+            "*** Begin Patch\n*** Environment ID: remote\n*** Add File: foo\n+hi\n*** End Patch";
+        let args = vec!["apply_patch".to_string(), patch.to_string()];
+        let dir = tempdir().unwrap();
+        assert_matches!(
+            maybe_parse_apply_patch_verified(
+                &args,
+                &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
+                LOCAL_FS.as_ref(),
+                /*sandbox*/ None,
+            )
+            .await,
+            MaybeApplyPatchVerified::CorrectnessError(
+                ApplyPatchError::EnvironmentIdInShellInvocation
+            )
         );
     }
 

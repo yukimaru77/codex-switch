@@ -317,6 +317,7 @@ pub struct ExecCommandToolOutput {
     pub exit_code: Option<i32>,
     pub original_token_count: Option<usize>,
     pub hook_command: Option<String>,
+    pub advisory: Option<String>,
 }
 
 impl ToolOutput for ExecCommandToolOutput {
@@ -430,6 +431,10 @@ impl ExecCommandToolOutput {
 
         sections.push("Output:".to_string());
         sections.push(self.truncated_output(self.model_output_max_tokens()));
+
+        if let Some(advisory) = &self.advisory {
+            sections.push(advisory.clone());
+        }
 
         sections.join("\n")
     }

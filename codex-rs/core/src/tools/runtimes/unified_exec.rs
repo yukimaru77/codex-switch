@@ -59,6 +59,7 @@ use tokio_util::sync::CancellationToken;
 /// sandbox preferences have been resolved for the current turn.
 #[derive(Clone, Debug)]
 pub struct UnifiedExecRequest {
+    pub environment_id: String,
     pub command: Vec<String>,
     pub shell_type: ShellType,
     pub hook_command: String,
@@ -83,6 +84,7 @@ pub struct UnifiedExecRequest {
 /// unified-exec launches.
 #[derive(serde::Serialize, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct UnifiedExecApprovalKey {
+    pub environment_id: String,
     pub command: Vec<String>,
     pub cwd: AbsolutePathBuf,
     pub tty: bool,
@@ -135,6 +137,7 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
 
     fn approval_keys(&self, req: &UnifiedExecRequest) -> Vec<Self::ApprovalKey> {
         vec![UnifiedExecApprovalKey {
+            environment_id: req.environment_id.clone(),
             command: canonicalize_command_for_approval(&req.command),
             cwd: req.cwd.clone(),
             tty: req.tty,
@@ -473,6 +476,7 @@ mod tests {
         let manager = UnifiedExecProcessManager::default();
         let runtime = UnifiedExecRuntime::new(&manager, UnifiedExecShellMode::Direct);
         let request = UnifiedExecRequest {
+            environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
             command: vec!["pwd".to_string()],
             shell_type: ShellType::Sh,
             hook_command: "pwd".to_string(),
@@ -572,6 +576,7 @@ mod tests {
         let cwd = AbsolutePathBuf::try_from(std::env::current_dir().unwrap())
             .expect("current dir is absolute");
         UnifiedExecRequest {
+            environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
             command: vec!["zsh".to_string(), "-c".to_string(), "echo hi".to_string()],
             shell_type: ShellType::Zsh,
             hook_command: "echo hi".to_string(),

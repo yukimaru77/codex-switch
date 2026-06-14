@@ -27,6 +27,7 @@ use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::user_input::UserInput;
 use core_test_support::managed_network_requirements_loader;
+use core_test_support::responses::ResponseMock;
 use core_test_support::responses::ev_apply_patch_custom_tool_call;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -795,6 +796,19 @@ async fn wait_for_completion(test: &TestCodex) {
         matches!(event, EventMsg::TurnComplete(_))
     })
     .await;
+}
+
+async fn wait_for_response_mock(mock_response: &ResponseMock) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        if !mock_response.requests().is_empty() {
+            return;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("timeout waiting for mocked response request");
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 fn body_contains(req: &Request, text: &str) -> bool {
@@ -2092,9 +2106,12 @@ async fn approving_apply_patch_for_session_skips_future_prompts_for_same_file() 
 
     let call_id_1 = "apply_patch_allow_session_1";
     let call_id_2 = "apply_patch_allow_session_2";
+    let prompt_1 = "apply_patch allow session";
+    let prompt_2 = "apply_patch allow session followup";
 
-    let _ = mount_sse_once(
+    let _first_tool = mount_sse_once_match(
         &server,
+        move |req: &Request| body_contains(req, prompt_1),
         sse(vec![
             ev_response_created("resp-1"),
             ev_apply_patch_custom_tool_call(call_id_1, &patch_add),
@@ -2102,8 +2119,9 @@ async fn approving_apply_patch_for_session_skips_future_prompts_for_same_file() 
         ]),
     )
     .await;
-    let _ = mount_sse_once(
+    let first_followup = mount_sse_once_match(
         &server,
+        move |req: &Request| body_contains(req, call_id_1),
         sse(vec![
             ev_assistant_message("msg-1", "done"),
             ev_completed("resp-2"),
@@ -2111,13 +2129,7 @@ async fn approving_apply_patch_for_session_skips_future_prompts_for_same_file() 
     )
     .await;
 
-    submit_turn(
-        &test,
-        "apply_patch allow session",
-        approval_policy,
-        sandbox_policy.clone(),
-    )
-    .await?;
+    submit_turn(&test, prompt_1, approval_policy, sandbox_policy.clone()).await?;
     let approval = expect_patch_approval(&test, call_id_1).await;
     test.codex
         .submit(Op::PatchApproval {
@@ -2125,11 +2137,13 @@ async fn approving_apply_patch_for_session_skips_future_prompts_for_same_file() 
             decision: ReviewDecision::ApprovedForSession,
         })
         .await?;
+    wait_for_response_mock(&first_followup).await;
     wait_for_completion(&test).await;
     assert!(fs::read_to_string(&path)?.contains("before"));
 
-    let _ = mount_sse_once(
+    let _second_tool = mount_sse_once_match(
         &server,
+        move |req: &Request| body_contains(req, prompt_2),
         sse(vec![
             ev_response_created("resp-3"),
             ev_apply_patch_custom_tool_call(call_id_2, &patch_update),
@@ -2137,8 +2151,9 @@ async fn approving_apply_patch_for_session_skips_future_prompts_for_same_file() 
         ]),
     )
     .await;
-    let _ = mount_sse_once(
+    let second_followup = mount_sse_once_match(
         &server,
+        move |req: &Request| body_contains(req, call_id_2),
         sse(vec![
             ev_assistant_message("msg-2", "done"),
             ev_completed("resp-4"),
@@ -2146,28 +2161,9 @@ async fn approving_apply_patch_for_session_skips_future_prompts_for_same_file() 
     )
     .await;
 
-    submit_turn(
-        &test,
-        "apply_patch allow session followup",
-        approval_policy,
-        sandbox_policy.clone(),
-    )
-    .await?;
-
-    let event = wait_for_event(&test.codex, |event| {
-        matches!(
-            event,
-            EventMsg::ApplyPatchApprovalRequest(_) | EventMsg::TurnComplete(_)
-        )
-    })
-    .await;
-    match event {
-        EventMsg::TurnComplete(_) => {}
-        EventMsg::ApplyPatchApprovalRequest(event) => {
-            panic!("unexpected patch approval request: {:?}", event.call_id)
-        }
-        other => panic!("unexpected event: {other:?}"),
-    }
+    submit_turn(&test, prompt_2, approval_policy, sandbox_policy.clone()).await?;
+    wait_for_response_mock(&second_followup).await;
+    wait_for_completion(&test).await;
 
     assert!(fs::read_to_string(&path)?.contains("after"));
     let _ = fs::remove_file(path);

@@ -232,6 +232,50 @@ impl TurnEnvironmentSnapshot {
 }
 
 #[cfg(test)]
+fn resolve_environment_selections(
+    environment_manager: &EnvironmentManager,
+    environments: &[TurnEnvironmentSelection],
+) -> CodexResult<TurnEnvironmentSnapshot> {
+    let mut seen_environment_ids = HashSet::with_capacity(environments.len());
+    let mut turn_environments = Vec::with_capacity(environments.len());
+    for selected_environment in environments {
+        if !seen_environment_ids.insert(selected_environment.environment_id.as_str()) {
+            continue;
+        }
+        let environment_id = selected_environment.environment_id.clone();
+        let environment = environment_manager
+            .get_environment(&environment_id)
+            .ok_or_else(|| {
+                CodexErr::InvalidRequest(format!("unknown turn environment id `{environment_id}`"))
+            })?;
+        let metadata = environment_manager.get_environment_metadata(&environment_id);
+        let cwd = metadata
+            .as_ref()
+            .map(|metadata| AbsolutePathBuf::from_absolute_path_checked(&metadata.cwd))
+            .transpose()
+            .map_err(|err| CodexErr::InvalidRequest(err.to_string()))?
+            .unwrap_or(selected_environment.cwd.to_abs_path().map_err(|err| {
+                CodexErr::InvalidRequest(format!(
+                    "turn environment cwd `{}` is not valid on this host: {err}",
+                    selected_environment.cwd
+                ))
+            })?);
+        let shell = metadata
+            .and_then(|metadata| metadata.shell)
+            .map(|shell| {
+                crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
+            });
+        turn_environments.push(TurnEnvironment::new(
+            environment_id,
+            environment,
+            cwd,
+            shell,
+        ));
+    }
+    Ok(TurnEnvironmentSnapshot { turn_environments })
+}
+
+#[cfg(test)]
 mod tests {
     use codex_exec_server::Environment;
     use codex_exec_server::ExecServerRuntimePaths;
@@ -422,6 +466,43 @@ url = "ws://127.0.0.1:8765"
                 )
                 .expect("resolved shell")
             )
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_environment_selections_restores_shell_metadata() {
+        let cwd = AbsolutePathBuf::current_dir().expect("cwd");
+        let cwd_uri = PathUri::from_abs_path(&cwd);
+        let manager = EnvironmentManager::create_for_tests(
+            Some("ws://127.0.0.1:8765".to_string()),
+            Some(test_runtime_paths()),
+        )
+        .await;
+        manager.set_environment_metadata(
+            REMOTE_ENVIRONMENT_ID.to_string(),
+            codex_exec_server::EnvironmentMetadata {
+                cwd: "/remote".to_string(),
+                shell: Some("/bin/sh".to_string()),
+            },
+        );
+
+        let resolved = resolve_environment_selections(
+            &manager,
+            &[TurnEnvironmentSelection {
+                environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
+                cwd: cwd_uri,
+            }],
+        )
+        .expect("remote environment should resolve");
+
+        assert_eq!(
+            resolved
+                .primary()
+                .expect("primary environment")
+                .shell
+                .as_ref()
+                .map(|shell| shell.shell_path.as_path()),
+            Some(std::path::Path::new("/bin/sh"))
         );
     }
 

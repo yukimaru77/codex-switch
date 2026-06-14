@@ -166,6 +166,44 @@ fn test_get_command_rejects_explicit_login_when_disallowed() -> anyhow::Result<(
 }
 
 #[test]
+fn test_get_command_defaults_to_non_login_for_sh() -> anyhow::Result<()> {
+    let json = r#"{"cmd": "echo hello", "shell": "/bin/sh"}"#;
+    let args: ExecCommandArgs = parse_arguments(json)?;
+
+    let resolved = get_command(
+        &args,
+        Arc::new(default_user_shell()),
+        &UnifiedExecShellMode::Direct,
+        /*allow_login_shell*/ true,
+    )
+    .map_err(anyhow::Error::msg)?;
+
+    assert_eq!(resolved.shell_type, ShellType::Sh);
+    assert_eq!(resolved.command[1], "-c");
+    Ok(())
+}
+
+#[test]
+fn test_get_command_rejects_explicit_login_for_sh() -> anyhow::Result<()> {
+    let json = r#"{"cmd": "echo hello", "shell": "/bin/sh", "login": true}"#;
+    let args: ExecCommandArgs = parse_arguments(json)?;
+
+    let err = get_command(
+        &args,
+        Arc::new(default_user_shell()),
+        &UnifiedExecShellMode::Direct,
+        /*allow_login_shell*/ true,
+    )
+    .expect_err("explicit login should be rejected for sh");
+
+    assert!(
+        err.contains("not supported for `sh`"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_get_command_rejects_explicit_shell_in_zsh_fork_mode() -> anyhow::Result<()> {
     let json = r#"{"cmd": "echo hello", "shell": "/bin/bash"}"#;
     let args: ExecCommandArgs = parse_arguments(json)?;
@@ -295,6 +333,7 @@ async fn exec_command_post_tool_use_payload_uses_output_for_noninteractive_one_s
         exit_code: Some(0),
         original_token_count: None,
         hook_command: Some("echo three".to_string()),
+        advisory: None,
     };
     let invocation = invocation_for_payload("exec_command", "call-43", payload).await;
     let handler = ExecCommandHandler::default();
@@ -325,6 +364,7 @@ async fn exec_command_post_tool_use_payload_uses_output_for_interactive_completi
         exit_code: Some(0),
         original_token_count: None,
         hook_command: Some("echo three".to_string()),
+        advisory: None,
     };
     let invocation = invocation_for_payload("exec_command", "call-44", payload).await;
     let handler = ExecCommandHandler::default();
@@ -356,6 +396,7 @@ async fn exec_command_post_tool_use_payload_skips_running_sessions() {
         exit_code: None,
         original_token_count: None,
         hook_command: Some("echo three".to_string()),
+        advisory: None,
     };
     let invocation = invocation_for_payload("exec_command", "call-45", payload).await;
     let handler = ExecCommandHandler::default();
@@ -382,6 +423,7 @@ async fn write_stdin_post_tool_use_payload_uses_original_exec_call_id_and_comman
         exit_code: Some(0),
         original_token_count: None,
         hook_command: Some("sleep 1; echo finished".to_string()),
+        advisory: None,
     };
     let invocation = invocation_for_payload("write_stdin", "write-stdin-call", payload).await;
     let handler = WriteStdinHandler;
@@ -413,6 +455,7 @@ async fn write_stdin_post_tool_use_payload_keeps_parallel_session_metadata_separ
         exit_code: Some(0),
         original_token_count: None,
         hook_command: Some("sleep 2; echo alpha".to_string()),
+        advisory: None,
     };
     let output_b = ExecCommandToolOutput {
         event_call_id: "exec-call-b".to_string(),
@@ -425,6 +468,7 @@ async fn write_stdin_post_tool_use_payload_keeps_parallel_session_metadata_separ
         exit_code: Some(0),
         original_token_count: None,
         hook_command: Some("sleep 1; echo beta".to_string()),
+        advisory: None,
     };
     let invocation_b = invocation_for_payload("write_stdin", "write-call-b", payload.clone()).await;
     let invocation_a = invocation_for_payload("write_stdin", "write-call-a", payload).await;

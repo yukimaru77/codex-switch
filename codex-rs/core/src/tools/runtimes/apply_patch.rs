@@ -39,8 +39,8 @@ use std::time::Instant;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize)]
 pub(crate) struct ApplyPatchApprovalKey {
-    environment_id: String,
-    path: AbsolutePathBuf,
+    pub(crate) environment_id: String,
+    pub(crate) path: AbsolutePathBuf,
 }
 
 #[derive(Debug)]

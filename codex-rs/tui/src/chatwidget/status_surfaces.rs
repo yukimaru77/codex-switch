@@ -564,9 +564,9 @@ impl ChatWidget {
             StatusLineItem::ModelWithReasoning => Some(self.model_with_reasoning_display_name()),
             StatusLineItem::Reasoning => Some(self.reasoning_display_name()),
             StatusLineItem::CurrentDir => {
-                // When env_switch has moved this session into a remote
-                // environment (docker/ssh), show the environment badge
-                // instead of the (now-irrelevant) local cwd.
+                // When the default execution target is a non-local
+                // environment (docker/ssh), show the environment badge instead
+                // of the local cwd.
                 //
                 // The badge may contain a very long container or host name, so
                 // we truncate it to the same width budget used by other status-

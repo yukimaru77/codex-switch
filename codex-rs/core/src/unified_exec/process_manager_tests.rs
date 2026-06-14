@@ -189,6 +189,7 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
         "call-unified-denied".to_string(),
     );
     let request = ExecCommandRequest {
+        environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
         command: vec![
             "sh".to_string(),
             "-lc".to_string(),
