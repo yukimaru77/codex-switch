@@ -117,11 +117,15 @@ fn spec_describes_environment_id_contract_without_prompt_level_prohibition() {
     );
     assert!(
         tool.description
-            .contains("after creating or selecting a Docker container on a remote host")
+            .contains("inside a container on an SSH host")
             && tool
                 .description
-                .contains("before running the benchmark/build/test/edit steps"),
-        "env_switch description should guide natural remote Docker workflows"
+                .contains("so later compatible tools do not need repeated ssh/docker wrappers"),
+        "env_switch description should guide ongoing remote/container workflows"
+    );
+    assert!(
+        !tool.description.contains("benchmark/build/test/edit"),
+        "env_switch description should stay generic rather than naming specific task categories"
     );
     assert!(
         tool.description
