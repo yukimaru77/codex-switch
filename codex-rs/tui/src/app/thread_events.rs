@@ -43,6 +43,9 @@ pub(super) struct ThreadEventStore {
     pub(super) session: Option<ThreadSessionState>,
     pub(super) turns: Vec<Turn>,
     pub(super) buffer: VecDeque<ThreadBufferedEvent>,
+    // Replaying a thread snapshot should restore live-only settings such as the env-switch badge
+    // even after a session refresh has rebased transient buffered events.
+    pub(super) latest_thread_settings_notification: Option<ServerNotification>,
     pub(super) pending_interactive_replay: PendingInteractiveReplayState,
     pub(super) active_turn_id: Option<String>,
     pub(super) pending_interrupt_turn_id: Option<String>,
@@ -72,6 +75,7 @@ impl ThreadEventStore {
             session: None,
             turns: Vec::new(),
             buffer: VecDeque::new(),
+            latest_thread_settings_notification: None,
             pending_interactive_replay: PendingInteractiveReplayState::default(),
             active_turn_id: None,
             pending_interrupt_turn_id: None,
@@ -127,6 +131,12 @@ impl ThreadEventStore {
     fn push_notification_inner(&mut self, notification: Cow<'_, ServerNotification>) {
         self.pending_interactive_replay
             .note_server_notification(notification.as_ref());
+        if matches!(
+            notification.as_ref(),
+            ServerNotification::ThreadSettingsUpdated(_)
+        ) {
+            self.latest_thread_settings_notification = Some(notification.clone().into_owned());
+        }
         match notification.as_ref() {
             ServerNotification::TurnStarted(turn) => {
                 self.active_turn_id = Some(turn.turn.id.clone());
@@ -207,24 +217,37 @@ impl ThreadEventStore {
     }
 
     pub(super) fn snapshot(&self) -> ThreadEventSnapshot {
+        let mut events: Vec<_> = self
+            .buffer
+            .iter()
+            .filter(|event| match event {
+                ThreadBufferedEvent::Request(request) => self
+                    .pending_interactive_replay
+                    .should_replay_snapshot_request(request),
+                ThreadBufferedEvent::Notification(notification)
+                    if matches!(
+                        notification.as_ref(),
+                        ServerNotification::ThreadSettingsUpdated(_)
+                    ) =>
+                {
+                    false
+                }
+                ThreadBufferedEvent::Notification(_)
+                | ThreadBufferedEvent::HistoryEntryResponse(_)
+                | ThreadBufferedEvent::FeedbackSubmission(_) => true,
+            })
+            .cloned()
+            .collect();
+        if let Some(notification) = &self.latest_thread_settings_notification {
+            events.insert(0, ThreadBufferedEvent::Notification(notification.clone()));
+        }
         ThreadEventSnapshot {
             session: self.session.clone(),
             turns: self.turns.clone(),
-            // Thread switches replay buffered events into a rebuilt ChatWidget. Only replay
-            // interactive prompts that are still pending, or answered approvals/input will reappear.
-            events: self
-                .buffer
-                .iter()
-                .filter(|event| match event {
-                    ThreadBufferedEvent::Request(request) => self
-                        .pending_interactive_replay
-                        .should_replay_snapshot_request(request.as_ref()),
-                    ThreadBufferedEvent::Notification(_)
-                    | ThreadBufferedEvent::HistoryEntryResponse(_)
-                    | ThreadBufferedEvent::FeedbackSubmission(_) => true,
-                })
-                .cloned()
-                .collect(),
+            // Thread switches replay buffered events into a rebuilt ChatWidget. Request replay is
+            // limited to prompts that are still pending; thread settings are normalized to the
+            // latest full notification so stale buffered settings cannot win during replay.
+            events,
             input_state: self.input_state.clone(),
         }
     }
