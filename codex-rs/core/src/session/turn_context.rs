@@ -738,12 +738,8 @@ impl Session {
         git_enrichment_policy: GitEnrichmentPolicy,
     ) -> Arc<TurnContext> {
         let turn_environments = self.services.turn_environments.snapshot().await;
-        let primary_turn_environment = turn_environments.primary();
-        // TODO(anp): Migrate per-turn config and legacy TurnContext cwd consumers to PathUri so
-        // a foreign primary environment does not fall back to the session's host cwd.
-        let cwd = primary_turn_environment
-            .as_ref()
-            .and_then(|turn_environment| turn_environment.cwd().to_abs_path().ok())
+        let cwd = turn_environments
+            .single_local_environment_cwd()
             .unwrap_or_else(|| session_configuration.cwd().clone());
         let per_turn_config = Self::build_per_turn_config(&session_configuration, cwd.clone());
         let model_info = self
@@ -784,7 +780,8 @@ impl Session {
             .plugin_skill_snapshots_for_config(&plugins_input);
         let skills_input = skills_load_input_from_config(&per_turn_config, effective_skill_roots)
             .with_plugin_skill_snapshots(plugin_skill_snapshots);
-        let fs = primary_turn_environment
+        let fs = turn_environments
+            .local()
             .map(|turn_environment| turn_environment.environment.get_filesystem());
         let skills_snapshot = self
             .services
