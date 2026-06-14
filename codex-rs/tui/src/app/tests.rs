@@ -1798,6 +1798,63 @@ async fn replayed_snapshot_restores_env_switch_badge_after_session_refresh_rebas
     );
 }
 
+#[tokio::test]
+async fn refreshed_snapshot_session_keeps_env_switch_badge_update_for_replay() {
+    let mut app = make_test_app().await;
+    let thread_id = ThreadId::new();
+    let initial_session = ThreadSessionState {
+        model: String::new(),
+        rollout_path: None,
+        ..test_thread_session(thread_id, test_path_buf("/tmp/local-project"))
+    };
+    app.thread_event_channels.insert(
+        thread_id,
+        ThreadEventChannel::new_with_session(
+            /*capacity*/ 4,
+            initial_session.clone(),
+            Vec::new(),
+        ),
+    );
+
+    {
+        let channel = app
+            .thread_event_channels
+            .get(&thread_id)
+            .expect("thread channel");
+        let mut store = channel.store.lock().await;
+        store.push_notification(env_switch_thread_settings_updated(thread_id));
+    }
+
+    let mut snapshot = app
+        .thread_event_channels
+        .get(&thread_id)
+        .expect("thread channel")
+        .store
+        .lock()
+        .await
+        .snapshot();
+    app.apply_refreshed_snapshot_thread(
+        thread_id,
+        AppServerStartedThread {
+            session: test_thread_session(thread_id, test_path_buf("/tmp/local-project")),
+            turns: Vec::new(),
+        },
+        &mut snapshot,
+    )
+    .await;
+
+    app.chat_widget.setup_status_line(
+        vec![crate::bottom_pane::StatusLineItem::CurrentDir],
+        /*use_theme_colors*/ true,
+    );
+    app.replay_thread_snapshot(snapshot, /*resume_restored_queue*/ false);
+
+    assert_eq!(
+        app.chat_widget.status_line_text(),
+        Some("🔗 example-host".to_string())
+    );
+}
+
 fn env_switch_thread_settings_updated(thread_id: ThreadId) -> ServerNotification {
     ServerNotification::ThreadSettingsUpdated(ThreadSettingsUpdatedNotification {
         thread_id: thread_id.to_string(),
