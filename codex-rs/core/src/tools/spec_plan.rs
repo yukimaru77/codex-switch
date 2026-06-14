@@ -12,6 +12,8 @@ use crate::tools::handlers::CodeModeExecuteHandler;
 use crate::tools::handlers::CodeModeWaitHandler;
 use crate::tools::handlers::CurrentTimeHandler;
 use crate::tools::handlers::DynamicToolHandler;
+use crate::tools::handlers::EnvListHandler;
+use crate::tools::handlers::EnvStatusHandler;
 use crate::tools::handlers::EnvSwitchHandler;
 use crate::tools::handlers::ExecCommandHandler;
 use crate::tools::handlers::ExecCommandHandlerOptions;
@@ -969,11 +971,14 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
 
     let allow_login_shell = any_environment_allows_login_shell(context.environments);
     let exec_permission_approvals_enabled = features.enabled(Feature::ExecPermissionApprovals);
+    let shell_tool_type = shell_type_for_model_and_features(&turn_context.model_info, features);
+    let env_switch_tools_enabled = features.enabled(Feature::EnvSwitch)
+        && matches!(shell_tool_type, ConfigShellToolType::UnifiedExec);
     // Include environment_id in tool specs when multiple environments are
-    // present OR when EnvSwitch is enabled (so the model can target a
-    // dynamically-registered environment even from a single-environment session).
-    let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple)
-        || features.enabled(Feature::EnvSwitch);
+    // present OR when env_switch is usable through environment-aware exec
+    // tools from a single-environment session.
+    let include_environment_id =
+        matches!(environment_mode, ToolEnvironmentMode::Multiple) || env_switch_tools_enabled;
     let supports_shell_command = context.environments.single_local_environment().is_some();
     let shell_command_options = ShellCommandHandlerOptions {
         backend_config: shell_command_backend_for_features(features),
@@ -981,7 +986,7 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
         exec_permission_approvals_enabled,
     };
 
-    match shell_type_for_model_and_features(&turn_context.model_info, features) {
+    match shell_tool_type {
         ConfigShellToolType::UnifiedExec => {
             registry.add(ExecCommandHandler::new(ExecCommandHandlerOptions {
                 allow_login_shell,
@@ -1024,6 +1029,15 @@ fn unified_exec_should_include_shell_parameter(
     ) || environments
         .turn_environments()
         .any(|environment| environment.environment.is_remote())
+}
+
+fn env_switch_tools_enabled(turn_context: &TurnContext) -> bool {
+    let features = turn_context.config.features.get();
+    features.enabled(Feature::EnvSwitch)
+        && matches!(
+            shell_type_for_model_and_features(&turn_context.model_info, features),
+            ConfigShellToolType::UnifiedExec
+        )
 }
 
 #[instrument(level = "trace", skip_all)]
@@ -1106,7 +1120,7 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
     if environment_mode.has_environment() && turn_context.model_info.apply_patch_tool_type.is_some()
     {
         let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple)
-            || features.enabled(Feature::EnvSwitch);
+            || env_switch_tools_enabled(turn_context);
         registry.add(ApplyPatchHandler::new(include_environment_id));
     }
 
@@ -1119,13 +1133,21 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
         registry.add(TestSyncHandler);
     }
 
-    if features.enabled(Feature::EnvSwitch) && environment_mode.has_environment() {
+    if env_switch_tools_enabled(turn_context) && environment_mode.has_environment() {
         registry.add(EnvSwitchHandler);
+    }
+
+    if environment_mode.has_environment()
+        && (matches!(environment_mode, ToolEnvironmentMode::Multiple)
+            || env_switch_tools_enabled(turn_context))
+    {
+        registry.add(EnvStatusHandler);
+        registry.add(EnvListHandler);
     }
 
     if environment_mode.has_environment() && features.enabled(Feature::ViewImage) {
         let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple)
-            || features.enabled(Feature::EnvSwitch);
+            || env_switch_tools_enabled(turn_context);
         registry.add(ViewImageHandler::new(ViewImageToolOptions {
             can_request_original_image_detail: can_request_original_image_detail(
                 &turn_context.model_info,

@@ -570,7 +570,7 @@ pub(crate) struct ChatWidget {
     /// Status-badge text shown in the status line when the thread's execution
     /// environment has been switched via `env_switch`.  `None` means the thread
     /// is running locally and no badge is displayed.
-    /// Example values: `"🐳 env-remote-test"`, `"🔗 dgx"`.
+    /// Example values: `"🐳 env-remote-test"`, `"🔗 example-host"`.
     ///
     /// # Derived-state rationale
     ///
