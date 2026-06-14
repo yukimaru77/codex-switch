@@ -50,6 +50,7 @@ struct RunExecLikeArgs {
     shell_type: Option<ShellType>,
     additional_permissions: Option<AdditionalPermissionProfile>,
     prefix_rule: Option<Vec<String>>,
+    advisory: Option<String>,
     session: Arc<crate::session::session::Session>,
     turn: Arc<TurnContext>,
     tracker: crate::tools::context::SharedTurnDiffTracker,
@@ -70,6 +71,7 @@ async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, Func
         shell_type,
         additional_permissions,
         prefix_rule,
+        advisory,
         session,
         turn,
         tracker,
@@ -239,6 +241,7 @@ async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, Func
     let content = emitter
         .finish(event_ctx, out, /*applied_patch_delta*/ None)
         .await?;
+    let content = append_advisory_to_content(content, advisory);
     Ok(FunctionToolOutput {
         body: vec![
             codex_protocol::models::FunctionCallOutputContentItem::InputText { text: content },
@@ -246,6 +249,14 @@ async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, Func
         success: Some(true),
         post_tool_use_response,
     })
+}
+
+fn append_advisory_to_content(mut content: String, advisory: Option<String>) -> String {
+    if let Some(advisory) = advisory {
+        content.push('\n');
+        content.push_str(&advisory);
+    }
+    content
 }
 
 #[cfg(test)]

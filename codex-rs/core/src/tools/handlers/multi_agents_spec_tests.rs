@@ -68,6 +68,11 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
         .expect("spawn_agent should use object params");
     assert!(description.contains("Spawns an agent to work on the specified task."));
     assert!(description.contains("The spawned agent will have the same tools as you"));
+    assert!(description.contains("inside Docker containers on SSH hosts"));
+    assert!(description.contains("do not hard-code raw `ssh ...` / `docker exec ...` wrappers"));
+    assert!(description.contains("report the resulting environment_id"));
+    assert!(description.contains("should not be the normal interface"));
+    assert!(description.contains("treat that as a target address"));
     assert!(!description.contains("max_concurrent_threads_per_session"));
     assert!(description.contains(SPAWN_AGENT_INHERITED_MODEL_GUIDANCE));
     assert!(
@@ -162,6 +167,37 @@ fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
             .get("service_tier")
             .and_then(|schema| schema.description.as_deref()),
         Some(SPAWN_AGENT_SERVICE_TIER_OVERRIDE_DESCRIPTION)
+    );
+}
+
+#[test]
+fn spawn_agent_tool_v1_guides_remote_docker_delegation_without_raw_wrappers() {
+    let tool = create_spawn_agent_tool_v1(SpawnAgentToolOptions {
+        available_models: Vec::new(),
+        agent_type_description: "role help".to_string(),
+        hide_agent_type_model_reasoning: false,
+        include_usage_hint: true,
+        usage_hint_text: None,
+    });
+
+    let ToolSpec::Namespace(namespace) = tool else {
+        panic!("spawn_agent v1 should be a namespace tool");
+    };
+    let Some(ResponsesApiNamespaceTool::Function(ResponsesApiTool { description, .. })) =
+        namespace.tools.first()
+    else {
+        panic!("spawn_agent should be a namespace function tool");
+    };
+
+    assert!(description.contains("inside Docker containers on SSH hosts"));
+    assert!(description.contains("do not hard-code raw `ssh ...` / `docker exec ...` wrappers"));
+    assert!(description.contains("report the resulting environment_id"));
+    assert!(description.contains("should not be the normal interface"));
+    assert!(description.contains("treat that as a target address"));
+    assert!(
+        description.contains(
+            "Raw ssh/docker is only for one-off probes, container creation/lifecycle steps"
+        )
     );
 }
 

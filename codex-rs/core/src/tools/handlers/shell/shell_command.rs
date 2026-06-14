@@ -1,3 +1,4 @@
+use codex_features::Feature;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ShellCommandToolCallParams;
 use codex_tools::ShellCommandBackendConfig;
@@ -14,8 +15,10 @@ use crate::shell::Shell;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::boxed_tool_output;
+use crate::tools::handlers::RemoteCommandAdvisoryOptions;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
+use crate::tools::handlers::remote_command_advisory;
 use crate::tools::handlers::resolve_workdir_base_path;
 use crate::tools::handlers::rewrite_function_string_argument;
 use crate::tools::handlers::updated_hook_command;
@@ -209,6 +212,14 @@ impl ShellCommandHandler {
         let base_cwd = turn.cwd.clone();
         let cwd = resolve_workdir_base_path(&arguments, &base_cwd)?;
         let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
+        let advisory = remote_command_advisory(
+            &params.command,
+            RemoteCommandAdvisoryOptions {
+                env_switch_enabled: turn.features.enabled(Feature::EnvSwitch),
+                explicit_environment_id: None,
+            },
+        )
+        .map(str::to_string);
         #[allow(deprecated)]
         let workdir = turn.resolve_path(params.workdir.clone());
         maybe_emit_implicit_skill_invocation(
@@ -241,6 +252,7 @@ impl ShellCommandHandler {
             shell_type,
             additional_permissions: params.additional_permissions.clone(),
             prefix_rule,
+            advisory,
             session,
             turn,
             tracker,

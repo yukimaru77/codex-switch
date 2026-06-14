@@ -1,8 +1,8 @@
 use codex_shell_command::bash::try_parse_shell;
 use codex_shell_command::bash::try_parse_word_only_commands_sequence;
 
-const RAW_REMOTE_ADVISORY: &str = "Advisory: this command used raw SSH/Docker to enter another execution target. If you will continue running commands, editing files, or inspecting images there, consider env_switch so compatible tools can use that target as the default; pass environment_id explicitly when clarity or an override is useful.";
-const DOCKER_RUN_ADVISORY: &str = "Advisory: docker run is appropriate for creating a container. If you will continue working inside the created container, consider env_switch so compatible tools can use it as the default execution environment; pass environment_id explicitly when clarity or an override is useful.";
+const RAW_REMOTE_ADVISORY: &str = "Advisory: this command used raw SSH/Docker to reach another execution target. If the task continues on that host or inside that container, call env_switch before the next substantive command so compatible tools use that target as the default environment instead of repeating ssh/docker wrappers. For nested SSH-to-Docker work, env_switch can register an id like `ssh:hostname>docker:container-name`; if env_switch cannot register the target, report that fallback reason before continuing with raw ssh/docker. Pass environment_id explicitly only when clarity or an override is useful.";
+const DOCKER_RUN_ADVISORY: &str = "Advisory: docker run is appropriate for creating a container. If the task continues inside that container, call env_switch before the next substantive command so compatible tools use the container as the default execution environment instead of repeating docker exec wrappers. For a container on an SSH host, register the nested target as `ssh:hostname>docker:container-name`; if env_switch cannot register the target, report that fallback reason before continuing with raw docker exec. Pass environment_id explicitly only when clarity or an override is useful.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RemoteCommandKind {
