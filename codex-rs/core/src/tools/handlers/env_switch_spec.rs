@@ -157,12 +157,10 @@ pub(crate) fn create_env_switch_tool() -> ToolSpec {
             `environment_id` can still be passed explicitly on those tools to override \
             another default or make the target unambiguous for one call. \
             Use this when a task asks you to keep working on an SSH host, inside a Docker \
-            container, or inside a container on an SSH host. In particular, after creating or \
-            selecting a Docker container on a remote host, call env_switch before running the \
-            benchmark/build/test/edit steps inside that container so later compatible tools do \
-            not need repeated ssh/docker wrappers. If env_switch is unavailable or cannot \
-            register the target, report that fallback reason before continuing with raw \
-            ssh/docker. Raw ssh/docker commands remain appropriate for one-off probes, \
+            container, or inside a container on an SSH host, so later compatible tools do not \
+            need repeated ssh/docker wrappers. If env_switch is unavailable or cannot register \
+            the target, report that fallback reason before continuing with raw ssh/docker. \
+            Raw ssh/docker commands remain appropriate for one-off probes, \
             container creation/lifecycle operations, custom transport options, data transfer, \
             TTY/port-forwarding workflows, or fallback after env_switch cannot register the \
             target. \
