@@ -116,6 +116,19 @@ fn spec_describes_environment_id_contract_without_prompt_level_prohibition() {
         "env_switch description should preserve legitimate raw ssh/docker uses"
     );
     assert!(
+        tool.description
+            .contains("after creating or selecting a Docker container on a remote host")
+            && tool
+                .description
+                .contains("before running the benchmark/build/test/edit steps"),
+        "env_switch description should guide natural remote Docker workflows"
+    );
+    assert!(
+        tool.description
+            .contains("report that fallback reason before continuing with raw"),
+        "env_switch description should require an explicit fallback reason"
+    );
+    assert!(
         tool.description.contains("base=\"ssh:example-host\"")
             && tool.description.contains("extend={\"type\":\"docker\""),
         "env_switch description should show nested SSH-to-Docker addressing"
