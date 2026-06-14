@@ -19,9 +19,12 @@ use crate::provision::ProvisionError;
 use crate::provision::RemoteLauncher;
 use crate::provision::VersionPolicy;
 use crate::provision::launcher::posix_single_quote;
+use crate::provision::paths::managed_codex_path;
+use crate::provision::paths::managed_current_dir;
+use crate::provision::paths::managed_release_dir;
 use crate::provision::probe::probe;
 use crate::provision::triple::resolve_triple;
-use crate::provision::version::is_dev_version;
+use crate::provision::version::github_token;
 
 /// Timeout for the version-verification command (short – same as probe).
 const VERIFY_TIMEOUT_SECS: u64 = 20;
@@ -39,17 +42,13 @@ pub struct ProvisionedCodex {
     pub codex_path: String,
     /// Installed version string (e.g. `"1.2.3"`).
     pub version: String,
-    /// Optional warning produced when install failed but an existing binary
-    /// could be used as a fallback.
+    /// Optional non-fatal provisioning warning.
     pub warning: Option<String>,
     /// Path to the preferred shell on the remote host, as detected by the
     /// probe script (`CODEX_SHELL:` line).  `None` when the remote probe did
     /// not emit a shell line (very old environments or exotic configurations).
     pub shell: Option<String>,
 }
-
-/// The standard installation symlink path relative to `$HOME`.
-const CODEX_SYMLINK_RELATIVE: &str = ".codex/bin/codex";
 
 /// Base URL for GitHub releases.
 const RELEASES_BASE: &str = "https://github.com/openai/codex/releases/download";
@@ -69,8 +68,8 @@ const RELEASES_BASE: &str = "https://github.com/openai/codex/releases/download";
 ///    verify the SHA-256, then stream the archive into the remote via the
 ///    launcher's stdin.
 /// 5. Verify the installed binary reports the expected version.
-/// 6. On download failure, fall back to the existing binary (if any) with a
-///    warning.
+/// 6. If installing the required version fails, return an error instead of
+///    falling back to an incompatible existing binary.
 pub async fn ensure_remote_codex(
     launcher: &RemoteLauncher,
     desired: &VersionPolicy,
@@ -80,23 +79,12 @@ pub async fn ensure_remote_codex(
     let remote_shell = probe_result.shell.clone();
 
     // Fast path: reuse an existing remote binary when the policy can be
-    // satisfied offline, so a routine switch to an already-provisioned remote
-    // never touches the network.
+    // satisfied offline, so a routine switch to an already-provisioned release
+    // build never touches the network. Dev builds intentionally miss this path
+    // and resolve Latest before deciding whether to reuse.
     if let Some((existing_path, existing_version)) = &probe_result.existing
         && desired.is_satisfied_by_existing(existing_version)
     {
-        // When the host is a dev build, the policy accepts any existing remote
-        // binary.  Warn about potential protocol incompatibility so the caller
-        // can surface this to the user.
-        if matches!(desired, VersionPolicy::HostVersion)
-            && is_dev_version(env!("CARGO_PKG_VERSION"))
-        {
-            tracing::warn!(
-                existing_version,
-                "reusing remote codex {existing_version} from a dev host build; \
-                 protocol versions may be incompatible"
-            );
-        }
         return Ok(ProvisionedCodex {
             codex_path: existing_path.clone(),
             version: existing_version.clone(),
@@ -122,26 +110,15 @@ pub async fn ensure_remote_codex(
         });
     }
 
-    let codex_path = format!("{}/{CODEX_SYMLINK_RELATIVE}", probe_result.home);
+    let codex_path = managed_codex_path(&probe_result.home);
 
     // Attempt to download, verify, and stream the archive.
-    match install_remote_codex(launcher, &triple, &version, &probe_result.home).await {
-        Ok(()) => {}
-        Err(install_err) => {
-            // Fall back to the existing binary when one is available.
-            if let Some((existing_path, existing_version)) = &probe_result.existing {
-                return Ok(ProvisionedCodex {
-                    codex_path: existing_path.clone(),
-                    version: existing_version.clone(),
-                    warning: Some(format!(
-                        "install failed ({install_err}); using existing codex {existing_version}"
-                    )),
-                    shell: remote_shell,
-                });
-            }
-            return Err(install_err);
-        }
-    }
+    install_remote_codex(launcher, &triple, &version, &probe_result.home)
+        .await
+        .map_err(|install_err| ProvisionError::InstallRequiredVersionFailed {
+            version: version.clone(),
+            source: Box::new(install_err),
+        })?;
 
     // Verify the installed binary.
     let installed_version = verify_remote_version(launcher, &codex_path).await?;
@@ -209,7 +186,11 @@ async fn install_remote_codex_inner(
     )?;
 
     // Download SHA256SUMS first (small file; full buffer is fine).
-    let sums_response = client.get(&sums_url).send().await?;
+    let mut sums_request = client.get(&sums_url);
+    if let Some(token) = github_token() {
+        sums_request = sums_request.bearer_auth(token);
+    }
+    let sums_response = sums_request.send().await?;
     check_github_response_status(&sums_response, triple, version)?;
     let sums_bytes = sums_response.error_for_status()?.bytes().await?;
 
@@ -225,7 +206,11 @@ async fn install_remote_codex_inner(
         .await
         .map_err(ProvisionError::TempFileIo)?;
 
-    let archive_response = client.get(&archive_url).send().await?;
+    let mut archive_request = client.get(&archive_url);
+    if let Some(token) = github_token() {
+        archive_request = archive_request.bearer_auth(token);
+    }
+    let archive_response = archive_request.send().await?;
     check_github_response_status(&archive_response, triple, version)?;
     let mut stream = archive_response.error_for_status()?.bytes_stream();
 
@@ -260,17 +245,19 @@ async fn install_remote_codex_inner(
     // All values interpolated into the shell script are wrapped with
     // `posix_single_quote` to prevent injection via paths containing shell
     // metacharacters (spaces, quotes, dollar signs, etc.).
-    let release_dir = format!("{remote_home}/.codex/bin/releases/{version}");
+    let release_dir = managed_release_dir(remote_home, version);
+    let current_dir = managed_current_dir(remote_home);
+    let symlink_path = managed_codex_path(remote_home);
     let install_sh = format!(
         "mkdir -p {release_dir_q} && \
          tar -xzf - -C {release_dir_q} && \
          chmod 0755 {codex_bin_q} && \
-         mkdir -p {bin_dir_q} && \
+         mkdir -p {current_dir_q} && \
          ln -sf {codex_bin_q} {symlink_q}",
         release_dir_q = posix_single_quote(&release_dir),
         codex_bin_q = posix_single_quote(&format!("{release_dir}/bin/codex")),
-        bin_dir_q = posix_single_quote(&format!("{remote_home}/.codex/bin")),
-        symlink_q = posix_single_quote(&format!("{remote_home}/.codex/bin/codex")),
+        current_dir_q = posix_single_quote(&current_dir),
+        symlink_q = posix_single_quote(&symlink_path),
     );
 
     let argv = launcher.shell_argv(&install_sh);
@@ -283,6 +270,7 @@ async fn install_remote_codex_inner(
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
 
     let mut child = cmd.spawn().map_err(ProvisionError::LauncherIo)?;
 
@@ -372,6 +360,7 @@ async fn verify_remote_version(
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
 
     let output = timeout(Duration::from_secs(VERIFY_TIMEOUT_SECS), cmd.output())
         .await
