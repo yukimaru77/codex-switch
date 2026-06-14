@@ -4,11 +4,19 @@
 //! and existing codex location + version.
 
 use std::process::Stdio;
+use std::time::Duration;
 
 use tokio::process::Command;
+use tokio::time::timeout;
 
 use crate::provision::ProvisionError;
 use crate::provision::RemoteLauncher;
+use crate::provision::paths::MANAGED_CODEX_SYMLINK_RELATIVE;
+use crate::provision::paths::managed_codex_path;
+
+/// Timeout for the initial remote probe. This must be bounded because it is
+/// the first SSH/Docker subprocess an env_switch call performs.
+const PROBE_TIMEOUT_SECS: u64 = 20;
 
 /// Information collected from the remote host in a single probe invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,8 +29,9 @@ pub struct RemoteProbe {
     pub home: String,
     /// Path and version of an existing codex binary, if found.
     ///
-    /// The probe checks both `command -v codex` (PATH-based) and
-    /// `~/.codex/bin/codex` (the standard installation symlink).
+    /// The probe checks only the env_switch-managed codex symlink under
+    /// `~/.codex-server/env-switch`, so unrelated user installations on PATH
+    /// cannot satisfy or interfere with provisioning.
     pub existing: Option<(String, String)>,
     /// Path to the preferred shell on the remote host.
     ///
@@ -47,11 +56,9 @@ set -e
 uname -s
 uname -m
 echo "$HOME"
-_codex_path=""
-if command -v codex >/dev/null 2>&1; then
-  _codex_path="$(command -v codex)"
-elif [ -x "$HOME/.codex/bin/codex" ]; then
-  _codex_path="$HOME/.codex/bin/codex"
+_codex_path="$HOME/__MANAGED_CODEX_SYMLINK_RELATIVE__"
+if [ ! -x "$_codex_path" ]; then
+  _codex_path=""
 fi
 if [ -n "$_codex_path" ]; then
   echo "CODEX_PATH:$_codex_path"
@@ -64,12 +71,20 @@ _sh="$( { [ -n "$SHELL" ] && command -v "$SHELL"; } 2>/dev/null || command -v ba
 [ -n "$_sh" ] && echo "CODEX_SHELL:$_sh"
 "#;
 
+fn probe_script() -> String {
+    PROBE_SCRIPT.replace(
+        "__MANAGED_CODEX_SYMLINK_RELATIVE__",
+        MANAGED_CODEX_SYMLINK_RELATIVE,
+    )
+}
+
 /// Runs the probe script on the remote via `launcher` and returns the parsed
 /// result.
 ///
 /// This performs exactly one subprocess invocation.
 pub async fn probe(launcher: &RemoteLauncher) -> Result<RemoteProbe, ProvisionError> {
-    let argv = launcher.shell_argv(PROBE_SCRIPT);
+    let script = probe_script();
+    let argv = launcher.shell_argv(&script);
     let (program, prefix_args) = argv
         .split_first()
         .ok_or_else(|| ProvisionError::ProbeOutputParse("empty launcher argv".to_string()))?;
@@ -79,8 +94,15 @@ pub async fn probe(launcher: &RemoteLauncher) -> Result<RemoteProbe, ProvisionEr
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
 
-    let output = cmd.output().await.map_err(ProvisionError::LauncherIo)?;
+    let output = timeout(Duration::from_secs(PROBE_TIMEOUT_SECS), cmd.output())
+        .await
+        .map_err(|_| ProvisionError::Timeout {
+            secs: PROBE_TIMEOUT_SECS,
+            context: "remote probe".to_string(),
+        })?
+        .map_err(ProvisionError::LauncherIo)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -130,8 +152,9 @@ pub(crate) fn parse_probe_output(output: &str) -> Result<RemoteProbe, ProvisionE
         }
     }
 
+    let expected_managed_path = managed_codex_path(&home);
     let existing = match (codex_path, codex_version) {
-        (Some(path), Some(version)) => Some((path, version)),
+        (Some(path), Some(version)) if path == expected_managed_path => Some((path, version)),
         _ => None,
     };
 

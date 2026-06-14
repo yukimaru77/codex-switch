@@ -7,12 +7,14 @@ use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::boxed_tool_output;
+use crate::tools::handlers::RemoteCommandAdvisoryOptions;
 use crate::tools::handlers::apply_granted_turn_permissions;
 use crate::tools::handlers::apply_patch::intercept_apply_patch;
 use crate::tools::handlers::implicit_granted_permissions;
 use crate::tools::handlers::normalize_and_validate_additional_permissions;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
+use crate::tools::handlers::remote_command_advisory;
 use crate::tools::handlers::resolve_tool_environment;
 use crate::tools::handlers::rewrite_function_string_argument;
 use crate::tools::handlers::updated_hook_command;
@@ -341,6 +343,7 @@ impl ExecCommandHandler {
                 exit_code: None,
                 original_token_count: None,
                 hook_command: None,
+                advisory: None,
             }));
         }
 
@@ -348,6 +351,7 @@ impl ExecCommandHandler {
         match manager
             .exec_command(
                 ExecCommandRequest {
+                    environment_id: turn_environment.environment_id.clone(),
                     command,
                     shell_type,
                     hook_command: hook_command.clone(),
@@ -371,7 +375,17 @@ impl ExecCommandHandler {
             )
             .await
         {
-            Ok(response) => Ok(boxed_tool_output(response)),
+            Ok(mut response) => {
+                response.advisory = remote_command_advisory(
+                    &hook_command,
+                    RemoteCommandAdvisoryOptions {
+                        env_switch_enabled: turn.features.enabled(Feature::EnvSwitch),
+                        explicit_environment_id: environment_args.environment_id.as_deref(),
+                    },
+                )
+                .map(str::to_string);
+                Ok(boxed_tool_output(response))
+            }
             Err(UnifiedExecError::SandboxDenied { output, .. }) => {
                 let output_text = output.aggregated_output.text;
                 let original_token_count = approx_token_count(&output_text);
@@ -388,6 +402,7 @@ impl ExecCommandHandler {
                     exit_code: Some(output.exit_code),
                     original_token_count: Some(original_token_count),
                     hook_command: Some(hook_command),
+                    advisory: None,
                 }))
             }
             Err(err) => Err(FunctionCallError::RespondToModel(format!(
