@@ -90,16 +90,26 @@ pub(crate) fn create_exec_command_tool_with_environment_id(
         options.exec_permission_approvals_enabled,
     ));
 
+    let base_description =
+        "Runs a command in a PTY, returning output or a session ID for ongoing interaction.";
+    let description = if include_environment_id {
+        format!(
+            "{base_description} For tasks that continue on an SSH host, inside a Docker \
+             container, or inside a container on an SSH host, first use env_switch to make \
+             that target the current default execution environment; then run this tool \
+             without repeating raw ssh/docker wrappers. Continue with raw ssh/docker only \
+             after env_switch is unavailable or cannot register the target."
+        )
+    } else {
+        base_description.to_string()
+    };
+
     ToolSpec::Function(ResponsesApiTool {
         name: "exec_command".to_string(),
         description: if cfg!(windows) {
-            format!(
-                "Runs a command in a PTY, returning output or a session ID for ongoing interaction.\n\n{}",
-                windows_shell_guidance()
-            )
+            format!("{description}\n\n{}", windows_shell_guidance())
         } else {
-            "Runs a command in a PTY, returning output or a session ID for ongoing interaction."
-                .to_string()
+            description
         },
         strict: false,
         defer_loading: None,
@@ -209,6 +219,7 @@ Examples of valid command strings:
     } else {
         r#"Runs a shell command and returns its output.
 - This legacy tool is not environment-aware and does not accept `environment_id`; use `exec_command` for env_switch targets.
+- If available, use env_switch before continuing work on an SSH host, inside Docker, or inside a Docker container on an SSH host; do not keep repeating raw ssh/docker wrappers for multi-step remote work unless env_switch is unavailable or cannot register the target.
 - Always set the `workdir` param when using the shell_command function. Do not use `cd` unless absolutely necessary."#
             .to_string()
     };
