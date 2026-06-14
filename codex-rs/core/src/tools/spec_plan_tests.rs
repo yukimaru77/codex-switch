@@ -847,6 +847,90 @@ async fn environment_tools_follow_the_step_context() {
 }
 
 #[tokio::test]
+async fn env_switch_feature_registers_environment_status_tools() {
+    let disabled = probe(|turn| {
+        set_feature(turn, Feature::EnvSwitch, /*enabled*/ false);
+    })
+    .await;
+    disabled.assert_visible_lacks(&["env_switch", "env_status", "env_list"]);
+    disabled.assert_registered_lacks(&["env_switch", "env_status", "env_list"]);
+
+    let multi_env_without_env_switch = probe(|turn| {
+        set_feature(turn, Feature::EnvSwitch, /*enabled*/ false);
+        duplicate_primary_environment(turn);
+    })
+    .await;
+    multi_env_without_env_switch.assert_visible_lacks(&["env_switch"]);
+    multi_env_without_env_switch.assert_registered_lacks(&["env_switch"]);
+    multi_env_without_env_switch.assert_visible_contains(&["env_status", "env_list"]);
+    multi_env_without_env_switch.assert_registered_contains(&["env_status", "env_list"]);
+
+    let enabled = probe(|turn| {
+        set_feature(turn, Feature::ShellTool, /*enabled*/ true);
+        set_feature(turn, Feature::UnifiedExec, /*enabled*/ true);
+        set_feature(turn, Feature::EnvSwitch, /*enabled*/ true);
+    })
+    .await;
+    enabled.assert_visible_contains(&["env_switch", "env_status", "env_list"]);
+    enabled.assert_registered_contains(&["env_switch", "env_status", "env_list"]);
+
+    let no_environment = probe(|turn| {
+        set_feature(turn, Feature::ShellTool, /*enabled*/ true);
+        set_feature(turn, Feature::UnifiedExec, /*enabled*/ true);
+        set_feature(turn, Feature::EnvSwitch, /*enabled*/ true);
+        turn.environments.turn_environments.clear();
+    })
+    .await;
+    no_environment.assert_visible_lacks(&["env_switch", "env_status", "env_list"]);
+    no_environment.assert_registered_lacks(&["env_switch", "env_status", "env_list"]);
+}
+
+#[tokio::test]
+async fn env_switch_feature_is_hidden_without_unified_exec() {
+    let legacy_shell_only = probe(|turn| {
+        set_feature(turn, Feature::ShellTool, /*enabled*/ true);
+        set_feature(turn, Feature::UnifiedExec, /*enabled*/ false);
+        set_feature(turn, Feature::EnvSwitch, /*enabled*/ true);
+        turn.model_info.shell_type = ConfigShellToolType::ShellCommand;
+    })
+    .await;
+
+    legacy_shell_only.assert_visible_contains(&["shell_command"]);
+    legacy_shell_only.assert_visible_lacks(&[
+        "exec_command",
+        "write_stdin",
+        "env_switch",
+        "env_status",
+        "env_list",
+    ]);
+    legacy_shell_only.assert_registered_lacks(&[
+        "exec_command",
+        "write_stdin",
+        "env_switch",
+        "env_status",
+        "env_list",
+    ]);
+}
+
+#[tokio::test]
+async fn host_context_gates_agent_job_tools() {
+    let normal_agent_job = probe(|turn| {
+        set_feature(turn, Feature::SpawnCsv, /*enabled*/ true);
+    })
+    .await;
+    normal_agent_job.assert_visible_contains(&["spawn_agents_on_csv"]);
+    normal_agent_job.assert_visible_lacks(&["report_agent_job_result"]);
+
+    let worker_agent_job = probe(|turn| {
+        set_feature(turn, Feature::SpawnCsv, /*enabled*/ true);
+        turn.session_source =
+            SessionSource::SubAgent(SubAgentSource::Other("agent_job:42".to_string()));
+    })
+    .await;
+    worker_agent_job.assert_visible_contains(&["spawn_agents_on_csv", "report_agent_job_result"]);
+}
+
+#[tokio::test]
 async fn sleep_tool_follows_current_time_config() {
     let disabled = probe(|turn| {
         set_feature(turn, Feature::CurrentTimeReminder, /*enabled*/ true);

@@ -5,6 +5,8 @@ use crate::agent::control::render_input_preview;
 use crate::agent::exceeds_thread_spawn_depth_limit;
 use crate::agent::next_thread_spawn_depth;
 use crate::agent::role::DEFAULT_ROLE_NAME;
+use crate::agent::role::apply_role_to_config;
+use crate::tools::handlers::environment_selections_with_default;
 use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
 use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v1;
 use codex_tools::ToolSpec;
@@ -127,7 +129,7 @@ async fn handle_spawn_agent(
             fork_parent_spawn_call_id: args.fork_context.then(|| call_id.clone()),
             fork_mode: args.fork_context.then_some(SpawnAgentForkMode::FullHistory),
             parent_thread_id: Some(session.thread_id),
-            environments: Some(turn.environments.to_selections()),
+            environments: Some(environment_selections_with_default(&session, &turn)),
         },
     ))
     .await
