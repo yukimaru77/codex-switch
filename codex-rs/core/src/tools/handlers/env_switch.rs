@@ -18,8 +18,10 @@ use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::boxed_tool_output;
+use crate::tools::handlers::dynamic_environment_visible_to_thread;
 use crate::tools::handlers::env_switch_spec::ENV_SWITCH_TOOL_NAME;
 use crate::tools::handlers::env_switch_spec::create_env_switch_tool;
+use crate::tools::handlers::environment_thread_keys;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
@@ -34,15 +36,14 @@ const RUN_REMOTE_TIMEOUT_SECS: u64 = 20;
 ///
 /// Provisions a remote codex exec-server (Docker or SSH) and registers it as
 /// a named environment in the session's [`EnvironmentManager`].  The
-/// environment id is then returned to the model so it can be supplied as
-/// `environment_id` on subsequent `shell_command` / `exec_command` /
-/// `apply_patch` / `view_image` calls.
+/// environment id becomes the thread's default execution target for compatible
+/// `exec_command` / `apply_patch` / `view_image` calls that omit
+/// `environment_id`.
 ///
-/// This handler is item-level: the model picks the target environment on each
-/// individual tool call.  Provisioning does not interrupt the current turn and
-/// does not change the thread's sticky environment selection.  The badge emitted
-/// via [`Session::emit_dynamic_environment_badge`] is display-only and shows
-/// the most recently provisioned remote environment.
+/// Compatible tools may still pass `environment_id` explicitly to override the
+/// current default for a single call.  The badge emitted via
+/// [`Session::emit_dynamic_environment_badge`] mirrors the effective default
+/// target for TUI clients.
 #[derive(Default)]
 pub struct EnvSwitchHandler;
 
@@ -68,7 +69,7 @@ struct EnvSwitchArgs {
     /// remote environment is used as the base.
     base: Option<String>,
     /// Relative mode: a single hop to append to the base environment.
-    /// When present, `hops` / `target` / `container` / `host` are ignored.
+    /// Mutually exclusive with `hops` and `target`.
     extend: Option<HopArg>,
 }
 
@@ -114,11 +115,14 @@ async fn run_remote(launcher: &RemoteLauncher, script: &str) -> (bool, String, S
     let Some((program, rest)) = argv.split_first().map(|(p, r)| (p.clone(), r.to_vec())) else {
         return (false, String::new(), "empty argv".to_string());
     };
-    let future = tokio::process::Command::new(&program).args(&rest).output();
+    let mut command = tokio::process::Command::new(&program);
+    command.args(&rest);
+    command.kill_on_drop(true);
+    let future = command.output();
     match tokio::time::timeout(Duration::from_secs(RUN_REMOTE_TIMEOUT_SECS), future).await {
         Ok(Ok(out)) => (
             out.status.success(),
-            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            String::from_utf8_lossy(&out.stdout).to_string(),
             String::from_utf8_lossy(&out.stderr).trim().to_string(),
         ),
         Ok(Err(e)) => (false, String::new(), e.to_string()),
@@ -128,6 +132,54 @@ async fn run_remote(launcher: &RemoteLauncher, script: &str) -> (bool, String, S
             format!("timed out after {RUN_REMOTE_TIMEOUT_SECS}s"),
         ),
     }
+}
+
+fn implicit_base_launcher(session: &Session, turn: &TurnContext) -> Option<RemoteLauncher> {
+    let environment_manager = &session.services.environment_manager;
+    let current_thread_key = session.thread_id.to_string();
+    if let Some(current_environment_id) =
+        environment_manager.get_last_environment_id(&current_thread_key)
+    {
+        return if current_environment_id == LOCAL_ENVIRONMENT_ID {
+            None
+        } else {
+            environment_manager.get_last_launcher(&current_thread_key)
+        };
+    }
+
+    environment_thread_keys(session, turn)
+        .into_iter()
+        .skip(1)
+        .find_map(|thread_key| environment_manager.get_last_launcher(&thread_key))
+}
+
+fn base_environment_visible(session: &Session, turn: &TurnContext, environment_id: &str) -> bool {
+    turn.environments
+        .turn_environments
+        .iter()
+        .any(|environment| environment.environment_id == environment_id)
+        || dynamic_environment_visible_to_thread(session, turn, environment_id)
+}
+
+fn remote_cwd_shell_expr(cwd: &str) -> String {
+    if cwd == "~" {
+        "\"$HOME\"".to_string()
+    } else if let Some(rest) = cwd.strip_prefix("~/") {
+        format!("\"$HOME\"/{}", posix_single_quote(rest))
+    } else {
+        posix_single_quote(cwd)
+    }
+}
+
+fn resolve_remote_cwd_script(cwd: Option<&str>) -> String {
+    let cwd_expr = cwd
+        .filter(|cwd| !cwd.is_empty())
+        .map(remote_cwd_shell_expr)
+        .unwrap_or_else(|| "\"$HOME\"".to_string());
+    format!(
+        "_codex_cwd={cwd_expr}\n\
+         mkdir -p -- \"$_codex_cwd\" && cd -P -- \"$_codex_cwd\" && printf '%s' \"$PWD\""
+    )
 }
 
 /// Converts a `HopArg` from the model into a [`Hop`], returning an error
@@ -177,12 +229,19 @@ async fn handle_env_switch(
     turn: &Arc<TurnContext>,
     args: EnvSwitchArgs,
 ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
+    validate_addressing_mode(&args)?;
+
     // --- Priority 1: relative mode (extend is present) -----------------------
     if let Some(extend_arg) = args.extend {
         let extend_hop = hop_from_arg(extend_arg)?;
 
         // Determine the base launcher.
         let base_launcher: RemoteLauncher = if let Some(base_id) = args.base {
+            if !base_environment_visible(session, turn, &base_id) {
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "env_switch: `base` environment id `{base_id}` is not visible to this thread; run env_status to list available environment ids"
+                )));
+            }
             // Explicit base: validate and reconstruct from id string.
             // Only launchers whose ids can be round-tripped through from_id are
             // accepted; this rejects arbitrary user-supplied strings.
@@ -194,15 +253,10 @@ async fn handle_env_switch(
         } else {
             // Implicit base: use the thread's most-recently-activated launcher
             // stored in the shared EnvironmentManager.
-            let thread_key = session.thread_id.to_string();
-            session
-                .services
-                .environment_manager
-                .get_last_launcher(&thread_key)
-                .ok_or_else(|| {
+            implicit_base_launcher(session, turn).ok_or_else(|| {
                     FunctionCallError::RespondToModel(
                         "env_switch: relative mode requires a `base` or a previously-activated \
-                         remote environment on this thread, but none was found. \
+                         remote environment on this thread or its parent thread, but none was found. \
                          Provide an explicit `base` environment_id."
                             .to_string(),
                     )
@@ -231,7 +285,7 @@ async fn handle_env_switch(
     // --- Priority 3: legacy single-hop `target` parameter -------------------
     let target = args.target.as_deref().unwrap_or("");
     match target {
-        "local" => handle_local_switch(turn, args.cwd),
+        "local" => handle_local_switch(session, turn, args.cwd).await,
         "docker" => {
             let container = args.container.ok_or_else(|| {
                 FunctionCallError::RespondToModel(
@@ -264,17 +318,114 @@ async fn handle_env_switch(
     }
 }
 
+fn validate_addressing_mode(args: &EnvSwitchArgs) -> Result<(), FunctionCallError> {
+    let has_target = args
+        .target
+        .as_deref()
+        .is_some_and(|target| !target.is_empty());
+    let has_hops = args.hops.is_some();
+    let has_extend = args.extend.is_some();
+    let mode_count = [has_target, has_hops, has_extend]
+        .into_iter()
+        .filter(|present| *present)
+        .count();
+
+    if mode_count == 0 {
+        return Err(FunctionCallError::RespondToModel(
+            "env_switch: specify exactly one addressing mode: `target`, `hops`, or `extend`"
+                .to_string(),
+        ));
+    }
+    if mode_count > 1 {
+        return Err(FunctionCallError::RespondToModel(
+            "env_switch: `target`, `hops`, and `extend` are mutually exclusive addressing modes"
+                .to_string(),
+        ));
+    }
+    if args.base.is_some() && !has_extend {
+        return Err(FunctionCallError::RespondToModel(
+            "env_switch: `base` is only valid with relative mode (`extend`)".to_string(),
+        ));
+    }
+    if has_extend && (args.host.is_some() || args.container.is_some()) {
+        return Err(FunctionCallError::RespondToModel(
+            "env_switch: top-level `host` and `container` are not valid with `extend`; put the value inside the `extend` object"
+                .to_string(),
+        ));
+    }
+    if has_hops && (args.host.is_some() || args.container.is_some()) {
+        return Err(FunctionCallError::RespondToModel(
+            "env_switch: top-level `host` and `container` are not valid with `hops`; put values inside each hop object"
+                .to_string(),
+        ));
+    }
+    if matches!(args.target.as_deref(), Some("local"))
+        && (args.host.is_some() || args.container.is_some())
+    {
+        return Err(FunctionCallError::RespondToModel(
+            "env_switch: `host` and `container` are not valid when target is `local`".to_string(),
+        ));
+    }
+    if matches!(args.target.as_deref(), Some("docker")) && args.host.is_some() {
+        return Err(FunctionCallError::RespondToModel(
+            "env_switch: `host` is not valid when target is `docker`".to_string(),
+        ));
+    }
+    if matches!(args.target.as_deref(), Some("ssh")) && args.container.is_some() {
+        return Err(FunctionCallError::RespondToModel(
+            "env_switch: `container` is not valid when target is `ssh`".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Returns a message explaining that the host environment is the default.
-/// No state is mutated; the model should omit `environment_id` (or use
-/// `"local"` / `{LOCAL_ENVIRONMENT_ID}`) to stay on the host.
-fn handle_local_switch(
-    turn: &Arc<TurnContext>,
-    _explicit_cwd: Option<String>,
+///
+/// This updates the env_switch runtime cursor and clears the non-local badge.
+/// The stored thread environment configuration remains unchanged.
+async fn handle_local_switch(
+    session: &Arc<Session>,
+    _turn: &Arc<TurnContext>,
+    explicit_cwd: Option<String>,
 ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
-    let _ = turn;
+    if explicit_cwd.as_deref().is_some_and(|cwd| !cwd.is_empty()) {
+        return Err(FunctionCallError::RespondToModel(
+            "env_switch: `cwd` is only valid for remote targets; omit `cwd` when target is `local`"
+                .to_string(),
+        ));
+    }
+    if session
+        .services
+        .environment_manager
+        .try_local_environment()
+        .is_none()
+    {
+        return Err(FunctionCallError::RespondToModel(
+            "env_switch: the local host environment is not registered in this session; \
+             use the default execution environment or start Codex with local environment support."
+                .to_string(),
+        ));
+    }
+    let thread_key = session.thread_id.to_string();
+    session
+        .services
+        .environment_manager
+        .clear_last_launcher(&thread_key);
+    session
+        .services
+        .environment_manager
+        .set_last_environment_id(thread_key.clone(), LOCAL_ENVIRONMENT_ID.to_string());
+    session
+        .services
+        .environment_manager
+        .record_thread_environment_id(thread_key, LOCAL_ENVIRONMENT_ID.to_string());
+    session
+        .emit_dynamic_environment_badge(LOCAL_ENVIRONMENT_ID)
+        .await;
     let message = format!(
-        "env_switch complete: the local host environment is active (id: `{LOCAL_ENVIRONMENT_ID}`). \
-         Omit `environment_id` on shell/apply_patch/view_image calls to execute on the host."
+        "env_switch complete: the local host environment is available (id: `{LOCAL_ENVIRONMENT_ID}`). \
+         It is now the default execution environment for compatible exec_command / apply_patch / view_image calls that omit `environment_id`. \
+         Pass another `environment_id` explicitly to target a different registered environment for one call."
     );
     Ok(boxed_tool_output(FunctionToolOutput::from_text(
         message,
@@ -293,6 +444,9 @@ fn handle_local_switch(
 /// - `PermissionProfile::Managed` with full disk write → `sandbox_mode=danger-full-access`
 /// - otherwise → `sandbox_mode=workspace-write` (best available on the remote)
 ///
+/// External sandbox enforcement is rejected before this function is called
+/// because the remote exec-server cannot inherit the external sandbox.
+///
 /// For the approval policy we use the turn's `approval_policy` value.
 /// `AskForApproval::Never` → `approval_policy=never` (auto-approve).
 /// Any other value → `approval_policy=on-failure` (prompt on failure, safest
@@ -308,7 +462,7 @@ fn derive_exec_server_policy_flags(turn: &TurnContext) -> Vec<String> {
 
     let sandbox_tag = match &turn.permission_profile {
         PermissionProfile::Disabled => "danger-full-access",
-        PermissionProfile::External { .. } => "danger-full-access",
+        PermissionProfile::External { .. } => "workspace-write",
         PermissionProfile::Managed { .. } => {
             let fsp = turn.permission_profile.file_system_sandbox_policy();
             if fsp.has_full_disk_write_access() {
@@ -341,6 +495,15 @@ async fn handle_remote_switch(
     launcher: RemoteLauncher,
     explicit_cwd: Option<String>,
 ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
+    if matches!(
+        turn.permission_profile,
+        codex_protocol::models::PermissionProfile::External { .. }
+    ) {
+        return Err(FunctionCallError::RespondToModel(
+            "env_switch: remote environment switching is unavailable under an external sandbox because the remote exec-server cannot inherit that sandbox enforcement"
+                .to_string(),
+        ));
+    }
     // --- Step 1: provision the remote codex exec-server --------------------------
     let provisioned = ensure_remote_codex(&launcher, &VersionPolicy::HostVersion)
         .await
@@ -355,25 +518,21 @@ async fn handle_remote_switch(
     let provision_warning = provisioned.warning.clone();
 
     // --- Step 2: determine effective cwd and ensure it exists --------------------
-    let remote_cwd: String = if let Some(cwd) = explicit_cwd {
-        let script = format!("mkdir -p {}", posix_single_quote(&cwd));
-        let (ok, _, err) = run_remote(&launcher, &script).await;
+    let remote_cwd: String = {
+        let script = resolve_remote_cwd_script(explicit_cwd.as_deref());
+        let (ok, cwd_out, err) = run_remote(&launcher, &script).await;
         if !ok {
+            let requested = explicit_cwd.as_deref().unwrap_or("$HOME");
             return Err(FunctionCallError::RespondToModel(format!(
-                "env_switch: could not create remote cwd `{cwd}`: {err}"
+                "env_switch: could not resolve remote cwd `{requested}`: {err}"
             )));
         }
-        cwd
-    } else {
-        let script = "printf '%s\\n' \"$HOME\" && mkdir -p \"$HOME\"";
-        let (ok, home, err) = run_remote(&launcher, script).await;
-        if ok && !home.is_empty() {
-            home
-        } else {
-            return Err(FunctionCallError::RespondToModel(format!(
-                "env_switch: could not determine remote $HOME: {err}"
-            )));
+        if cwd_out.is_empty() {
+            return Err(FunctionCallError::RespondToModel(
+                "env_switch: remote cwd resolver returned empty output".to_string(),
+            ));
         }
+        cwd_out
     };
 
     // --- Step 3: build the environment id -----------------------------------------
@@ -388,24 +547,20 @@ async fn handle_remote_switch(
         ))
     })?;
     let _ = abs_cwd; // stored as string in EnvironmentMetadata; AbsolutePathBuf validates it
+    let metadata = EnvironmentMetadata {
+        cwd: remote_cwd.clone(),
+        shell: provisioned.shell.clone(),
+    };
     session
         .services
         .environment_manager
-        .set_environment_metadata(
-            environment_id.clone(),
-            EnvironmentMetadata {
-                cwd: remote_cwd.clone(),
-                shell: provisioned.shell.clone(),
-            },
-        );
+        .set_environment_metadata(environment_id.clone(), metadata.clone());
 
-    // Record the launcher in the shared registry so sub-agents and relative-mode
-    // calls on this thread can find the most-recently-activated launcher.
     let thread_key = session.thread_id.to_string();
     session
         .services
         .environment_manager
-        .set_last_launcher(thread_key, launcher.clone());
+        .set_thread_environment_metadata(thread_key.clone(), environment_id.clone(), metadata);
 
     // --- Step 5: register the stdio environment in the EnvironmentManager ----------
     let policy_flags = derive_exec_server_policy_flags(turn);
@@ -441,11 +596,25 @@ async fn handle_remote_switch(
             ))
         })?;
 
-    // --- Step 6: emit a display-only badge event ---------------------------------
-    // Shows the most recently provisioned remote environment in the TUI.
-    // This is a display-only badge; it does not change the thread's sticky
-    // environment selection (future turns still default to the local host
-    // unless the model explicitly passes environment_id).
+    // Record the launcher after registration succeeds so relative mode never
+    // inherits a launcher for an environment that failed to register.
+    session
+        .services
+        .environment_manager
+        .set_last_launcher(thread_key.clone(), launcher.clone());
+    session
+        .services
+        .environment_manager
+        .set_last_environment_id(thread_key.clone(), environment_id.clone());
+    session
+        .services
+        .environment_manager
+        .record_thread_environment_id(thread_key, environment_id.clone());
+
+    // --- Step 6: emit a badge event for the new default target --------------------
+    // Shows the thread's env_switch-selected default execution environment in
+    // the TUI. The resolver uses the same environment id for compatible tool
+    // calls that omit environment_id.
     session
         .emit_dynamic_environment_badge(&environment_id)
         .await;
@@ -458,10 +627,9 @@ async fn handle_remote_switch(
     let message = format!(
         "env_switch complete: environment `{environment_id}` is ready \
          (codex {deployed_version} at {codex_path}, cwd={remote_cwd}). \
-         To run commands inside this environment, pass `\"environment_id\": \"{environment_id}\"` \
-         to shell_command / exec_command / apply_patch / view_image. \
-         Omitting environment_id continues to execute on the local host. \
-         Do NOT call env_switch again for the same target unless you want to re-provision.\
+         It is now the default execution environment for compatible exec_command / apply_patch / view_image calls that omit `environment_id`. \
+         Pass `\"environment_id\": \"{environment_id}\"` explicitly only when you need to override another default or be extra explicit. \
+         You usually do not need to call env_switch again for the same target unless you want to refresh provisioning, change cwd, or recover a broken connection.\
          {warning_suffix}"
     );
     Ok(boxed_tool_output(FunctionToolOutput::from_text(

@@ -326,6 +326,7 @@ pub struct ExecCommandToolOutput {
     /// Bytes omitted by the output collection cap before model-facing truncation.
     pub output_omitted_bytes: Option<NonZeroUsize>,
     pub hook_command: Option<String>,
+    pub advisory: Option<String>,
 }
 
 impl ToolOutput for ExecCommandToolOutput {
@@ -464,6 +465,10 @@ impl ExecCommandToolOutput {
 
         sections.push("Output:".to_string());
         sections.push(self.truncated_output(self.model_output_max_tokens()));
+
+        if let Some(advisory) = &self.advisory {
+            sections.push(advisory.clone());
+        }
 
         sections.join("\n")
     }

@@ -15,7 +15,10 @@ pub struct ViewImageToolOptions {
 pub fn create_view_image_tool(options: ViewImageToolOptions) -> ToolSpec {
     let mut properties = BTreeMap::from([(
         "path".to_string(),
-        JsonSchema::string(Some("Local filesystem path to an image file.".to_string())),
+        JsonSchema::string(Some(
+            "Filesystem path to an image file in the selected execution environment. Relative paths resolve against that environment's cwd."
+                .to_string(),
+        )),
     )]);
     if options.can_request_original_image_detail {
         properties.insert(
@@ -33,8 +36,10 @@ pub fn create_view_image_tool(options: ViewImageToolOptions) -> ToolSpec {
             "environment_id".to_string(),
             JsonSchema::string(Some(
                 "Read the image from a specific execution target: pass an `environment_id` \
-                 returned by the env_switch tool (e.g. `docker:foo` or `ssh:dgx>docker:c`) to \
-                 read inside that container/host. Omit it to read from the local host."
+                 listed by env_status/env_list or returned by env_switch when available \
+                 (e.g. `docker:container-name` or `ssh:hostname>docker:container-name`) \
+                 to read inside that target. Omit it to use the current default execution \
+                 environment, which env_switch can update when available."
                     .to_string(),
             )),
         );
@@ -42,7 +47,7 @@ pub fn create_view_image_tool(options: ViewImageToolOptions) -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: VIEW_IMAGE_TOOL_NAME.to_string(),
-        description: "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk."
+        description: "View an image file from the selected execution environment when visual inspection is needed. Use this for images already available on disk."
             .to_string(),
         strict: false,
         defer_loading: None,
@@ -69,3 +74,7 @@ fn view_image_output_schema() -> Value {
         "additionalProperties": false
     })
 }
+
+#[cfg(test)]
+#[path = "view_image_spec_tests.rs"]
+mod tests;

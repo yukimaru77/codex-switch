@@ -14,8 +14,7 @@ pub enum Hop {
     /// is needed for this hop itself.  If an SSH hop sits outside this one,
     /// the SSH layer's [`shell_join`] will quote the docker tokens.
     Docker { container: String },
-    /// Run via `ssh -T -q -o BatchMode=yes -o StrictHostKeyChecking=accept-new
-    /// -o LogLevel=ERROR -- <host>`.
+    /// Run via SSH with non-interactive, bounded connection flags.
     ///
     /// SSH concatenates all trailing argv elements with spaces and hands them
     /// to the remote login shell for parsing.  Therefore the tokens that follow
@@ -39,9 +38,11 @@ impl Hop {
 ///
 /// Rules:
 /// - Must not be empty.
+/// - Must not exceed 256 bytes.
 /// - Must not start with `-` (would be interpreted as a flag by ssh/docker).
 /// - Must not contain `>` (used as the id segment separator in
 ///   [`RemoteLauncher::id`]; would corrupt round-trip parsing).
+/// - Must not contain ASCII whitespace or control characters.
 ///
 /// This function is intentionally `pub` so that call sites that accept
 /// user-supplied hop values (e.g. `env_switch`'s `hop_from_arg`) can validate
@@ -49,6 +50,12 @@ impl Hop {
 pub fn validate_hop_value(s: &str) -> Result<(), String> {
     if s.is_empty() {
         return Err("hop value must not be empty".to_string());
+    }
+    if s.len() > MAX_HOP_VALUE_LEN {
+        return Err(format!(
+            "hop value length {} exceeds maximum {MAX_HOP_VALUE_LEN}",
+            s.len()
+        ));
     }
     if s.starts_with('-') {
         return Err(format!(
@@ -60,14 +67,19 @@ pub fn validate_hop_value(s: &str) -> Result<(), String> {
             "hop value `{s}` must not contain `>` (reserved as the id segment separator)"
         ));
     }
+    if s.chars().any(|ch| ch.is_control() || ch.is_whitespace()) {
+        return Err(format!(
+            "hop value `{s}` must not contain whitespace or control characters"
+        ));
+    }
     Ok(())
 }
 
 /// Describes how to reach the remote execution environment.
 ///
 /// The `hops` field lists transport layers from **outermost to innermost**.
-/// For example, `[Ssh { host: "dgx" }, Docker { container: "c" }]` means: SSH
-/// into `dgx`, then run `docker exec` inside that host.
+/// For example, `[Ssh { host: "hostname" }, Docker { container: "c" }]` means: SSH
+/// into `hostname`, then run `docker exec` inside that host.
 ///
 /// An empty `hops` list is not a valid `RemoteLauncher`; use `local` execution
 /// instead.
@@ -103,7 +115,7 @@ impl RemoteLauncher {
     /// into a [`RemoteLauncher`].
     ///
     /// Format: `<type>:<value>` segments separated by `>`, e.g.
-    /// `"ssh:dgx>docker:c"`.  The first `:` is used as the type/value separator
+    /// `"ssh:hostname>docker:c"`.  The first `:` is used as the type/value separator
     /// so that the value may itself contain `:` characters (e.g. `user@host`).
     ///
     /// Returns `Err` if the string is empty, any segment is missing a `:`
@@ -160,7 +172,7 @@ impl RemoteLauncher {
     /// Examples:
     /// - single-hop Docker: `"docker:my-container"`
     /// - single-hop SSH: `"ssh:user@host"`
-    /// - SSH-then-Docker: `"ssh:dgx>docker:c"`
+    /// - SSH-then-Docker: `"ssh:hostname>docker:c"`
     pub fn id(&self) -> String {
         self.hops
             .iter()
@@ -182,11 +194,11 @@ impl RemoteLauncher {
     ///   being misinterpreted as flags.
     /// - `Ssh{h}`:     wrap current tokens with [`shell_join`] into a single
     ///   argument, then prepend
-    ///   `["ssh", "-T", "-q", "-o", "BatchMode=yes", "-o",
-    ///    "StrictHostKeyChecking=accept-new", "-o", "LogLevel=ERROR", "--", h]`.
+    ///   `["ssh", <hardening flags>, "--", h]`.
     ///   The SSH hardening options prevent password prompts (BatchMode),
     ///   suppress MOTD/banners that would corrupt JSON-RPC stdout (LogLevel,
-    ///   -q), and make the host-key policy explicit (StrictHostKeyChecking).
+    ///   -q), make the host-key policy explicit (StrictHostKeyChecking), and
+    ///   bound stuck connections (ConnectTimeout, ServerAlive*).
     ///   The `--` separator prevents host names starting with `-` from being
     ///   misinterpreted as flags.
     pub fn exec_argv(&self, inner: Vec<String>) -> Vec<String> {
@@ -201,17 +213,14 @@ impl RemoteLauncher {
     /// # Single-hop examples
     /// - **Docker**: `["docker", "exec", "-i", "--", "<container>", "sh", "-c",
     ///   script]` — Docker passes argv to `execve`; no extra quoting needed.
-    /// - **SSH**: `["ssh", "-T", "-q", "-o", "BatchMode=yes", "-o",
-    ///   "StrictHostKeyChecking=accept-new", "-o", "LogLevel=ERROR", "--",
-    ///   "<host>", "sh -c '<quoted_script>'"]` — SSH hands all trailing
+    /// - **SSH**: `["ssh", <hardening flags>, "--", "<host>",
+    ///   "sh -c '<quoted_script>'"]` — SSH hands all trailing
     ///   arguments to the remote login shell as-is; the script is wrapped in
     ///   POSIX single-quote escaping.
     ///
     /// # Multi-hop example
-    /// `[Ssh{dgx}, Docker{c}]` with `script = "uname -m"` yields:
-    /// `["ssh", "-T", "-q", "-o", "BatchMode=yes", "-o",
-    ///  "StrictHostKeyChecking=accept-new", "-o", "LogLevel=ERROR", "--",
-    ///  "dgx",
+    /// `[Ssh{hostname}, Docker{c}]` with `script = "uname -m"` yields:
+    /// `["ssh", <hardening flags>, "--", "hostname",
     ///  "'docker' 'exec' '-i' '--' 'c' 'sh' '-c' 'uname -m'"]`
     pub fn shell_argv(&self, script: &str) -> Vec<String> {
         let inner = vec!["sh".to_string(), "-c".to_string(), script.to_string()];
@@ -228,6 +237,8 @@ impl RemoteLauncher {
 ///   connection but reject changed keys (prevents MITM on already-known hosts).
 /// - `-o LogLevel=ERROR`: suppress MOTD, banners, and info messages that would
 ///   corrupt the JSON-RPC stdout stream.
+/// - `-o ConnectTimeout=20`: bound SSH connection establishment.
+/// - `-o ServerAliveInterval=15` / `ServerAliveCountMax=2`: detect dead links.
 const SSH_HARDENING_FLAGS: &[&str] = &[
     "-T",
     "-q",
@@ -237,7 +248,15 @@ const SSH_HARDENING_FLAGS: &[&str] = &[
     "StrictHostKeyChecking=accept-new",
     "-o",
     "LogLevel=ERROR",
+    "-o",
+    "ConnectTimeout=20",
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=2",
 ];
+
+const MAX_HOP_VALUE_LEN: usize = 256;
 
 /// Folds `hops` (outer-to-inner) over `inner_tokens` by processing from
 /// innermost to outermost, so each outer hop wraps the already-composed result.
@@ -264,7 +283,11 @@ fn fold_hops(hops: &[Hop], inner_tokens: Vec<String>) -> Vec<String> {
                 // end-of-options separator ensures a host name that starts with
                 // `-` is never misinterpreted as an SSH flag.
                 let mut argv: Vec<String> = std::iter::once("ssh".to_string())
-                    .chain(SSH_HARDENING_FLAGS.iter().map(|s| s.to_string()))
+                    .chain(
+                        SSH_HARDENING_FLAGS
+                            .iter()
+                            .map(std::string::ToString::to_string),
+                    )
                     .chain(["--".to_string(), host.clone()])
                     .collect();
                 argv.push(shell_join(&tokens));

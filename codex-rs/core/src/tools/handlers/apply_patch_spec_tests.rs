@@ -33,4 +33,16 @@ fn create_apply_patch_freeform_tool_includes_environment_id_when_requested() {
             .definition
             .contains("\"*** Environment ID: \" filename LF")
     );
+    assert!(
+        tool.description
+            .contains("*** Environment ID: <environment_id>")
+    );
+    assert!(tool.description.contains(
+        "current default execution environment, which env_switch can update when available"
+    ));
+    assert!(
+        !tool
+            .description
+            .contains("non-default execution environment")
+    );
 }
