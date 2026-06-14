@@ -444,7 +444,9 @@ async fn warm_plugins_and_skills_for_session_init(
     skills_service: Arc<SkillsService>,
     turn_environments: &TurnEnvironmentSnapshot,
 ) -> Vec<SkillError> {
-    let fs = turn_environments.primary_filesystem();
+    let fs = turn_environments
+        .local()
+        .map(|environment| environment.environment.get_filesystem());
     let plugins_input = config.plugins_config_input();
     let plugin_outcome = plugins_manager.plugins_for_config(&plugins_input).await;
     let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
@@ -899,9 +901,13 @@ impl Session {
             ));
             turn_environments.update_selections(session_configuration.environment_selections());
             let resolved_environments = turn_environments.snapshot().await;
+            let instruction_environments = TurnEnvironmentSnapshot {
+                turn_environments: resolved_environments.local().cloned().into_iter().collect(),
+                starting: Vec::new(),
+            };
             let agents_md_manager = Arc::new(AgentsMdManager::new(user_instructions));
             agents_md_manager
-                .refresh(config.as_ref(), &resolved_environments)
+                .refresh(config.as_ref(), &instruction_environments)
                 .await;
             let plugin_skill_errors = warm_plugins_and_skills_for_session_init(
                 Arc::clone(&config),
