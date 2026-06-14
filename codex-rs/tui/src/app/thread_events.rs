@@ -64,6 +64,7 @@ impl ThreadEventStore {
                 ServerNotification::HookStarted(_)
                     | ServerNotification::HookCompleted(_)
                     | ServerNotification::McpServerStatusUpdated(_)
+                    | ServerNotification::ThreadSettingsUpdated(_)
             ),
             ThreadBufferedEvent::HistoryEntryResponse(_) => false,
         }
