@@ -31,20 +31,21 @@ impl VersionPolicy {
     /// Returns `true` when an already-installed remote binary reporting
     /// `existing` satisfies this policy *without* a network round-trip.
     ///
-    /// This lets the reuse path avoid the GitHub API entirely (important when
-    /// the API is rate-limited): an explicit `Exact` match is reused as-is, and
-    /// a dev/placeholder host build reuses whatever codex is already present
-    /// rather than forcing a `Latest` lookup it has no authority to demand.
-    /// `Latest` always re-checks, since the whole point is to pull the newest.
+    /// This lets release builds avoid the GitHub API entirely when the managed
+    /// binary already matches the desired version. `Latest` and dev/placeholder
+    /// host builds must re-check, since their concrete target is the newest
+    /// published release.
     pub fn is_satisfied_by_existing(&self, existing: &str) -> bool {
         match self {
-            VersionPolicy::Exact(v) => normalize_version(existing) == normalize_version(v),
+            VersionPolicy::Exact(v) => canonicalize_exact_version(v)
+                .is_ok_and(|version| normalize_version(existing) == version.as_str()),
             VersionPolicy::HostVersion => {
                 let host_version = env!("CARGO_PKG_VERSION");
                 if is_dev_version(host_version) {
-                    // A dev host has no authoritative version; reuse any
-                    // existing remote codex instead of resolving Latest.
-                    true
+                    // A dev host has no authoritative version; resolve Latest
+                    // before deciding whether an existing managed binary is
+                    // current enough to reuse.
+                    false
                 } else {
                     normalize_version(existing) == normalize_version(host_version)
                 }
@@ -61,7 +62,7 @@ impl VersionPolicy {
     /// it falls back) performs a network request.
     pub async fn resolve(&self) -> Result<String, ProvisionError> {
         match self {
-            VersionPolicy::Exact(v) => Ok(v.clone()),
+            VersionPolicy::Exact(v) => canonicalize_exact_version(v),
             VersionPolicy::HostVersion => {
                 let host_version = env!("CARGO_PKG_VERSION");
                 if is_dev_version(host_version) {
@@ -79,6 +80,29 @@ impl VersionPolicy {
 /// not be published to the remote.
 pub(crate) fn is_dev_version(v: &str) -> bool {
     v == "0.0.0" || v.contains("-dev")
+}
+
+pub(crate) fn canonicalize_exact_version(version: &str) -> Result<String, ProvisionError> {
+    let trimmed = version.trim();
+    let version = trimmed
+        .strip_prefix("rust-v")
+        .or_else(|| trimmed.strip_prefix('v'))
+        .unwrap_or(trimmed);
+
+    if version.is_empty() {
+        return Err(ProvisionError::InvalidVersion(
+            "version must not be empty".to_string(),
+        ));
+    }
+    if version
+        .chars()
+        .any(|ch| ch.is_control() || ch.is_whitespace() || matches!(ch, '/' | '\\'))
+    {
+        return Err(ProvisionError::InvalidVersion(format!(
+            "version `{trimmed}` contains an invalid character"
+        )));
+    }
+    Ok(version.to_string())
 }
 
 /// Minimal deserialization target for the GitHub releases/latest response.
@@ -123,7 +147,7 @@ pub(crate) async fn resolve_latest_version() -> Result<String, ProvisionError> {
 }
 
 /// Returns a GitHub API token from the standard environment variables, if set.
-fn github_token() -> Option<String> {
+pub(crate) fn github_token() -> Option<String> {
     ["GITHUB_TOKEN", "GH_TOKEN", "CODEX_GITHUB_TOKEN"]
         .iter()
         .find_map(|key| std::env::var(key).ok())

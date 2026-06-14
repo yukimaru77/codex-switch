@@ -58,9 +58,21 @@ pub enum ProvisionError {
     #[error("failed to resolve latest release version: {0}")]
     LatestVersionResolve(String),
 
+    /// A requested exact version string is invalid.
+    #[error("invalid codex version: {0}")]
+    InvalidVersion(String),
+
     /// The remote codex binary reported an unexpected version after install.
     #[error("post-install version check failed: expected {expected}, got {actual}")]
     VersionCheckFailed { expected: String, actual: String },
+
+    /// Installing the concrete required version failed.
+    #[error("failed to install required codex version {version}: {source}")]
+    InstallRequiredVersionFailed {
+        version: String,
+        #[source]
+        source: Box<ProvisionError>,
+    },
 
     /// A command exceeded its allowed time limit.
     #[error("command timed out after {secs}s: {context}")]
@@ -69,4 +81,25 @@ pub enum ProvisionError {
     /// An I/O error occurred when writing to a temporary file during install.
     #[error("temporary file I/O error during install: {0}")]
     TempFileIo(#[source] std::io::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProvisionError;
+
+    #[test]
+    fn install_required_version_failed_names_requested_version() {
+        let err = ProvisionError::InstallRequiredVersionFailed {
+            version: "1.2.3".to_string(),
+            source: Box::new(ProvisionError::AssetNotInSums {
+                asset: "codex-package-x86_64-unknown-linux-musl.tar.gz".to_string(),
+            }),
+        };
+
+        assert!(
+            err.to_string()
+                .contains("failed to install required codex version 1.2.3"),
+            "{err}"
+        );
+    }
 }

@@ -67,10 +67,13 @@ fn parse_version_output_empty() {
 /// quoted correctly and does not spill into the surrounding script.
 #[test]
 fn verify_remote_version_cmd_quotes_path_with_spaces() {
-    let path = "/home/user name/.codex/bin/codex";
+    let path = "/home/user name/.codex-server/env-switch/current/codex";
     let quoted = posix_single_quote(path);
     // The quoted form should wrap the whole path in single quotes.
-    assert_eq!(quoted, "'/home/user name/.codex/bin/codex'");
+    assert_eq!(
+        quoted,
+        "'/home/user name/.codex-server/env-switch/current/codex'"
+    );
 
     // Simulate building the version command the same way verify_remote_version
     // does, and confirm the shell word is safe.
@@ -79,14 +82,14 @@ fn verify_remote_version_cmd_quotes_path_with_spaces() {
     let argv = launcher.shell_argv(&version_cmd);
     // The script arg (last element for Docker) must contain the quoted path.
     let script = argv.last().unwrap();
-    assert!(script.contains("'/home/user name/.codex/bin/codex'"));
-    assert!(!script.contains("/home/user name/.codex/bin/codex --version"));
+    assert!(script.contains("'/home/user name/.codex-server/env-switch/current/codex'"));
+    assert!(!script.contains("/home/user name/.codex-server/env-switch/current/codex --version"));
 }
 
 /// A codex_path with a single-quote character must not break out of quoting.
 #[test]
 fn verify_remote_version_cmd_escapes_single_quote_in_path() {
-    let path = "/home/user's/.codex/bin/codex";
+    let path = "/home/user's/.codex-server/env-switch/current/codex";
     let quoted = posix_single_quote(path);
     // Must use the '\'' escape sequence, not a raw single-quote.
     assert!(
@@ -169,18 +172,20 @@ fn streaming_sha256_matches_oneshot() {
 fn install_script_quoting_covers_paths_with_spaces() {
     let remote_home = "/home/user name";
     let version = "1.2.3";
-    let release_dir = format!("{remote_home}/.codex/bin/releases/{version}");
+    let release_dir = format!("{remote_home}/.codex-server/env-switch/releases/{version}");
+    let current_dir = format!("{remote_home}/.codex-server/env-switch/current");
+    let symlink_path = format!("{current_dir}/codex");
 
     let install_sh = format!(
         "mkdir -p {release_dir_q} && \
          tar -xzf - -C {release_dir_q} && \
          chmod 0755 {codex_bin_q} && \
-         mkdir -p {bin_dir_q} && \
+         mkdir -p {current_dir_q} && \
          ln -sf {codex_bin_q} {symlink_q}",
         release_dir_q = posix_single_quote(&release_dir),
         codex_bin_q = posix_single_quote(&format!("{release_dir}/bin/codex")),
-        bin_dir_q = posix_single_quote(&format!("{remote_home}/.codex/bin")),
-        symlink_q = posix_single_quote(&format!("{remote_home}/.codex/bin/codex")),
+        current_dir_q = posix_single_quote(&current_dir),
+        symlink_q = posix_single_quote(&symlink_path),
     );
 
     // The script must not contain any unquoted space in the paths.

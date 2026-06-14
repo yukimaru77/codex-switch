@@ -629,6 +629,7 @@ impl UnifiedExecProcessManager {
             exit_code,
             original_token_count: Some(original_token_count),
             hook_command: Some(request.hook_command.clone()),
+            advisory: None,
         };
 
         Ok(response)
@@ -784,6 +785,7 @@ impl UnifiedExecProcessManager {
             exit_code,
             original_token_count: Some(original_token_count),
             hook_command: Some(hook_command),
+            advisory: None,
         };
 
         Ok(response)
@@ -1144,6 +1146,7 @@ impl UnifiedExecProcessManager {
             })
             .await;
         let req = UnifiedExecToolRequest {
+            environment_id: request.environment_id.clone(),
             command: request.command.clone(),
             shell_type: request.shell_type,
             hook_command: request.hook_command.clone(),
