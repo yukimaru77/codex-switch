@@ -1,71 +1,57 @@
-<p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
-<p align="center">
-  <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
-</p>
-</br>
-If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE.</a>
-</br>If you want the desktop app experience, run <code>codex app</code> or visit <a href="https://chatgpt.com/codex?app-landing-page=true">the Codex App page</a>.
-</br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a>.</p>
+# Codex env_switch
 
----
+このプロジェクトは Codex に `env_switch` ツールを持たせるための fork です。
 
-## Quickstart
+`env_switch` は、人間が `ssh hoge` や `docker exec -it hoge bash` で別環境のシェルに入る体験を、Codex の組み込みツールにも与えるものです。
 
-### Installing and running Codex CLI
+Codex にはファイル編集、画像読み取り、検索などの便利な組み込みツールがあります。しかし通常、それらはローカル環境にしか使えません。たとえば SSH 先のファイルを書き換える場合、Codex は `ssh host "..."` のような shell コマンドを書く必要があります。
 
-Run the following on Mac or Linux to install Codex CLI:
+この方法には次の問題があります。
+
+- 毎回 `ssh` や `docker exec` を書くのでトークン効率が悪い
+- shell の出力が曖昧になりやすい
+- ファイル編集や画像読み取りなど、Codex の組み込みツールの強みを活かしにくい
+
+`env_switch` は、Codex のツール実行先を SSH 先、Docker コンテナ内、さらにそのネスト環境へ切り替えられるようにします。
+
+## Demo
+
+TODO: デモ GIF を追加する。
+
+```markdown
+![env_switch demo](docs/assets/env-switch-demo.gif)
+```
+
+## Build
 
 ```shell
-curl -fsSL https://chatgpt.com/codex/install.sh | sh
+cd codex-rs
+cargo build -p codex-cli --bin codex
 ```
 
-Run the following on Windows to install Codex CLI:
-
-```
-powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
-```
-
-Codex CLI can also be installed via the following package managers:
+ビルドした Codex を起動するには:
 
 ```shell
-# Install using npm
-npm install -g @openai/codex
+./target/debug/codex --yolo
 ```
+
+## Demo GIF の撮影方法
+
+macOS なら画面収録で動画を撮れます。
+
+1. `Shift + Command + 5` を押す
+2. 収録範囲を選ぶ
+3. Codex で `env_switch` を使う様子を録画する
+4. 保存された `.mov` を GIF に変換する
+
+`ffmpeg` がある場合:
 
 ```shell
-# Install using Homebrew
-brew install --cask codex
+ffmpeg -i demo.mov -vf "fps=12,scale=1200:-1:flags=lanczos" docs/assets/env-switch-demo.gif
 ```
 
-Then simply run `codex` to get started.
+GIF を置くディレクトリがなければ作成します。
 
-<details>
-<summary>You can also go to the <a href="https://github.com/openai/codex/releases/latest">latest GitHub Release</a> and download the appropriate binary for your platform.</summary>
-
-Each GitHub Release contains many executables, but in practice, you likely want one of these:
-
-- macOS
-  - Apple Silicon/arm64: `codex-aarch64-apple-darwin.tar.gz`
-  - x86_64 (older Mac hardware): `codex-x86_64-apple-darwin.tar.gz`
-- Linux
-  - x86_64: `codex-x86_64-unknown-linux-musl.tar.gz`
-  - arm64: `codex-aarch64-unknown-linux-musl.tar.gz`
-
-Each archive contains a single entry with the platform baked into the name (e.g., `codex-x86_64-unknown-linux-musl`), so you likely want to rename it to `codex` after extracting it.
-
-</details>
-
-### Using Codex with your ChatGPT plan
-
-Run `codex` and select **Sign in with ChatGPT**. We recommend signing into your ChatGPT account to use Codex as part of your Plus, Pro, Business, Edu, or Enterprise plan. [Learn more about what's included in your ChatGPT plan](https://help.openai.com/en/articles/11369540-codex-in-chatgpt).
-
-You can also use Codex with an API key, but this requires [additional setup](https://developers.openai.com/codex/auth#sign-in-with-an-api-key).
-
-## Docs
-
-- [**Codex Documentation**](https://developers.openai.com/codex)
-- [**Contributing**](./docs/contributing.md)
-- [**Installing & building**](./docs/install.md)
-- [**Open source fund**](./docs/open-source-fund.md)
-
-This repository is licensed under the [Apache-2.0 License](LICENSE).
+```shell
+mkdir -p docs/assets
+```
