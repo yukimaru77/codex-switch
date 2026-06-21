@@ -5817,7 +5817,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             .await;
     let resolved_turn_environments = resolved_environments.clone();
     let turn_environments = Arc::new(ThreadEnvironments::new(
-        environment_manager,
+        Arc::clone(&environment_manager),
         default_user_shell(),
         session_configuration.turn_environment_config(),
         ShellSnapshot::disabled(),
@@ -5933,7 +5933,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         ),
         tool_search_handler_cache: Default::default(),
         turn_environments: Arc::clone(&turn_environments),
-        environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+        environment_manager,
     };
 
     let session = Session {
@@ -7177,6 +7177,16 @@ async fn remote_primary_environment_does_not_retarget_turn_context_cwd() {
         .environment_manager
         .upsert_environment("ssh:mine".to_string(), "ws://127.0.0.1:8765".to_string())
         .expect("seed remote environment");
+    session
+        .services
+        .environment_manager
+        .set_environment_metadata(
+            "ssh:mine".to_string(),
+            codex_exec_server::EnvironmentMetadata {
+                cwd: remote_cwd.as_path().display().to_string(),
+                shell: Some("/bin/sh".to_string()),
+            },
+        );
 
     let turn_context = session
         .new_turn_with_sub_id(
@@ -7187,7 +7197,7 @@ async fn remote_primary_environment_does_not_retarget_turn_context_cwd() {
                     environments: vec![
                         TurnEnvironmentSelection {
                             environment_id: "ssh:mine".to_string(),
-                            cwd: remote_cwd.clone(),
+                            cwd: PathUri::from_abs_path(&remote_cwd),
                         },
                         local(local_cwd.clone()),
                     ],
@@ -8058,7 +8068,7 @@ where
         resolved_environments_for_configuration(&session_configuration, &default_environments)
             .await;
     let turn_environments = Arc::new(ThreadEnvironments::new(
-        environment_manager,
+        Arc::clone(&environment_manager),
         default_user_shell(),
         session_configuration.turn_environment_config(),
         ShellSnapshot::disabled(),
@@ -8174,7 +8184,7 @@ where
         ),
         tool_search_handler_cache: Default::default(),
         turn_environments: Arc::clone(&turn_environments),
-        environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+        environment_manager,
     };
 
     let session = Arc::new(Session {

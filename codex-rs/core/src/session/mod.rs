@@ -774,9 +774,11 @@ impl Session {
         // This task will run until Op::Shutdown is received.
         let session_for_loop = Arc::clone(&session);
         let session_loop_handle = tokio::spawn(async move {
-            submission_loop(session_for_loop, configured_config, rx_sub)
-                .instrument(info_span!("session_loop", thread_id = %thread_id))
-                .await;
+            Box::pin(
+                submission_loop(session_for_loop, configured_config, rx_sub)
+                    .instrument(info_span!("session_loop", thread_id = %thread_id)),
+            )
+            .await;
         });
         let io = SessionIo {
             tx_sub,

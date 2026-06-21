@@ -50,7 +50,6 @@ use serde::Deserialize;
 use serde_json::Map;
 use serde_json::Value;
 use std::path::Path;
-use std::path::PathBuf;
 
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::function_tool::FunctionCallError;
@@ -250,11 +249,9 @@ fn turn_environment_from_env_switch_metadata(
             meta.cwd
         ))
     })?;
-    let shell = meta
-        .shell
-        .map(|shell| {
-            crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
-        });
+    let shell = meta.shell.map(|shell| {
+        crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
+    });
     Ok(TurnEnvironment::new(
         environment_id.to_string(),
         environment,
@@ -782,15 +779,17 @@ mod tests {
         manager
             .upsert_environment("ssh:mine".to_string(), "ws://127.0.0.1:8765".to_string())
             .expect("seed remote environment");
-        turn.environments.turn_environments.push(TurnEnvironment::new(
-            "ssh:mine".to_string(),
-            Arc::new(
-                Environment::create_for_tests(Some("ws://127.0.0.1:8765".to_string()))
-                    .expect("remote environment"),
-            ),
-            AbsolutePathBuf::from_absolute_path("/old").expect("old cwd"),
-            None,
-        ));
+        turn.environments
+            .turn_environments
+            .push(TurnEnvironment::new(
+                "ssh:mine".to_string(),
+                Arc::new(
+                    Environment::create_for_tests(Some("ws://127.0.0.1:8765".to_string()))
+                        .expect("remote environment"),
+                ),
+                AbsolutePathBuf::from_absolute_path("/old").expect("old cwd"),
+                None,
+            ));
         manager.set_environment_metadata(
             "ssh:mine".to_string(),
             EnvironmentMetadata {
