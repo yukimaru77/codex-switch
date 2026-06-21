@@ -236,7 +236,7 @@ impl ShellCommandHandler {
         #[allow(deprecated)]
         let base_cwd = resolved_environment
             .as_ref()
-            .map(|environment| environment.cwd.clone())
+            .map(|environment| environment.cwd().clone())
             .unwrap_or_else(|| turn.cwd.clone());
         let cwd = resolve_workdir_base_path(&arguments, &base_cwd)?;
         let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
