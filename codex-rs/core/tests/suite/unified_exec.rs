@@ -2,6 +2,7 @@ use core_test_support::test_codex::local_selections;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
+use std::future::Future;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::sync::OnceLock;
@@ -49,9 +50,29 @@ use pretty_assertions::assert_eq;
 use regex_lite::Regex;
 use serde_json::Value;
 use serde_json::json;
+use serial_test::serial;
 use tokio::time::Duration;
 
 const UNIFIED_EXEC_LAGGED_OUTPUT_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[cfg(unix)]
+fn run_env_switch_advisory_test(
+    future: impl Future<Output = Result<()>> + Send + 'static,
+) -> Result<()> {
+    std::thread::Builder::new()
+        .name("env-switch-advisory-test".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime")
+                .block_on(future)
+        })
+        .expect("spawn env_switch advisory test thread")
+        .join()
+        .expect("env_switch advisory test thread panicked")
+}
 
 fn extract_output_text(item: &Value) -> Option<&str> {
     item.get("output").and_then(|value| match value {
@@ -589,8 +610,14 @@ async fn unified_exec_respects_workdir_override() -> Result<()> {
 }
 
 #[cfg(unix)]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unified_exec_advises_env_switch_after_raw_ssh() -> Result<()> {
+#[test]
+#[serial(env_switch_advisory)]
+fn unified_exec_advises_env_switch_after_raw_ssh() -> Result<()> {
+    run_env_switch_advisory_test(unified_exec_advises_env_switch_after_raw_ssh_inner())
+}
+
+#[cfg(unix)]
+async fn unified_exec_advises_env_switch_after_raw_ssh_inner() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
     skip_if_windows!(Ok(()));
@@ -608,7 +635,7 @@ async fn unified_exec_advises_env_switch_after_raw_ssh() -> Result<()> {
             .enable(Feature::EnvSwitch)
             .expect("test config should allow env_switch feature update");
     });
-    let test = builder.build_with_remote_env(&server).await?;
+    let test = builder.build(&server).await?;
 
     let ssh_path = test.config.cwd.join("ssh");
     fs::write(&ssh_path, "#!/bin/sh\nprintf 'fake-ssh-output\\n'\n")?;
@@ -617,7 +644,7 @@ async fn unified_exec_advises_env_switch_after_raw_ssh() -> Result<()> {
     let call_id = "uexec-raw-ssh-advisory";
     let args = json!({
         "cmd": format!("{} example-host hostname", ssh_path.display()),
-        "yield_time_ms": 250,
+        "yield_time_ms": 30000,
     });
 
     let responses = vec![
@@ -661,8 +688,16 @@ async fn unified_exec_advises_env_switch_after_raw_ssh() -> Result<()> {
 }
 
 #[cfg(unix)]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unified_exec_advises_env_switch_with_explicit_environment_id() -> Result<()> {
+#[test]
+#[serial(env_switch_advisory)]
+fn unified_exec_advises_env_switch_with_explicit_environment_id() -> Result<()> {
+    run_env_switch_advisory_test(
+        unified_exec_advises_env_switch_with_explicit_environment_id_inner(),
+    )
+}
+
+#[cfg(unix)]
+async fn unified_exec_advises_env_switch_with_explicit_environment_id_inner() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
     skip_if_windows!(Ok(()));
@@ -680,7 +715,7 @@ async fn unified_exec_advises_env_switch_with_explicit_environment_id() -> Resul
             .enable(Feature::EnvSwitch)
             .expect("test config should allow env_switch feature update");
     });
-    let test = builder.build_with_remote_env(&server).await?;
+    let test = builder.build(&server).await?;
 
     let docker_path = test.config.cwd.join("docker");
     fs::write(&docker_path, "#!/bin/sh\nprintf 'fake-docker-output\\n'\n")?;
@@ -690,7 +725,7 @@ async fn unified_exec_advises_env_switch_with_explicit_environment_id() -> Resul
     let args = json!({
         "cmd": format!("{} exec example-container hostname", docker_path.display()),
         "environment_id": "local",
-        "yield_time_ms": 250,
+        "yield_time_ms": 30000,
     });
 
     let responses = vec![
