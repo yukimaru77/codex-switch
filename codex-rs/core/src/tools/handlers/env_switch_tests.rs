@@ -808,8 +808,14 @@ async fn resolve_tool_environment_uses_env_switch_default_and_explicit_override(
         .expect("implicit default should resolve")
         .expect("implicit environment");
     assert_eq!(implicit.environment_id, "ssh:mine");
-    assert_eq!(implicit.cwd.as_path(), std::path::Path::new("/mine"));
-    assert_eq!(implicit.shell.as_deref(), Some("/bin/bash"));
+    assert_eq!(implicit.cwd().as_path(), std::path::Path::new("/mine"));
+    assert_eq!(
+        implicit
+            .shell
+            .as_ref()
+            .map(|shell| shell.shell_path.as_path()),
+        Some(std::path::Path::new("/bin/bash"))
+    );
     assert!(implicit.environment.is_remote());
 
     let explicit = resolve_tool_environment(&session, &turn, Some("docker:other"))
@@ -817,7 +823,7 @@ async fn resolve_tool_environment_uses_env_switch_default_and_explicit_override(
         .expect("explicit override should resolve")
         .expect("explicit environment");
     assert_eq!(explicit.environment_id, "docker:other");
-    assert_eq!(explicit.cwd.as_path(), std::path::Path::new("/other"));
+    assert_eq!(explicit.cwd().as_path(), std::path::Path::new("/other"));
 
     let local = resolve_tool_environment(
         &session,
@@ -848,12 +854,14 @@ async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot
         .expect("seed remote environment");
     turn.environments
         .turn_environments
-        .push(crate::session::turn_context::TurnEnvironment {
-            environment_id: "ssh:mine".to_string(),
+        .push(crate::session::turn_context::TurnEnvironment::new(
+            "ssh:mine".to_string(),
             environment,
-            cwd: AbsolutePathBuf::from_absolute_path("/old").expect("old cwd"),
-            shell: Some("/bin/bash".to_string()),
-        });
+            AbsolutePathBuf::from_absolute_path("/old").expect("old cwd"),
+            Some(crate::shell::get_shell_by_model_provided_path(
+                &std::path::PathBuf::from("/bin/bash"),
+            )),
+        ));
     manager.set_thread_environment_metadata(
         thread_key.clone(),
         "ssh:mine".to_string(),
@@ -869,15 +877,27 @@ async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot
         .await
         .expect("implicit default should resolve")
         .expect("implicit environment");
-    assert_eq!(implicit.cwd.as_path(), std::path::Path::new("/new"));
-    assert_eq!(implicit.shell.as_deref(), Some("/bin/sh"));
+    assert_eq!(implicit.cwd().as_path(), std::path::Path::new("/new"));
+    assert_eq!(
+        implicit
+            .shell
+            .as_ref()
+            .map(|shell| shell.shell_path.as_path()),
+        Some(std::path::Path::new("/bin/sh"))
+    );
 
     let explicit = resolve_tool_environment(&session, &turn, Some("ssh:mine"))
         .await
         .expect("explicit environment should resolve")
         .expect("explicit environment");
-    assert_eq!(explicit.cwd.as_path(), std::path::Path::new("/old"));
-    assert_eq!(explicit.shell.as_deref(), Some("/bin/bash"));
+    assert_eq!(explicit.cwd().as_path(), std::path::Path::new("/old"));
+    assert_eq!(
+        explicit
+            .shell
+            .as_ref()
+            .map(|shell| shell.shell_path.as_path()),
+        Some(std::path::Path::new("/bin/bash"))
+    );
 }
 
 #[tokio::test]
