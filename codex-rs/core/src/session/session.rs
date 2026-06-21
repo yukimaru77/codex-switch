@@ -898,7 +898,7 @@ impl Session {
                 ShellSnapshot::disabled()
             };
             let turn_environments = Arc::new(ThreadEnvironments::new(
-                environment_manager,
+                Arc::clone(&environment_manager),
                 default_shell.clone(),
                 shell_snapshot,
                 inherited_environments.unwrap_or_default(),
