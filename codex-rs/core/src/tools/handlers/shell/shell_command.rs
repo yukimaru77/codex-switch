@@ -97,8 +97,8 @@ impl ShellCommandHandler {
         shell.derive_exec_args(command, use_login_shell)
     }
 
-    /// When `environment_shell` is `Some(path)`, that shell is used to wrap the
-    /// command (e.g. `/bin/sh` on an Alpine remote).  `session.user_shell()` is
+    /// When `environment_shell` is `Some`, that shell is used to wrap the
+    /// command (e.g. `/bin/sh` on an Alpine remote). `session.user_shell()` is
     /// only the fallback when `environment_shell` is `None`.
     pub(super) fn to_exec_params(
         params: &ShellCommandToolCallParams,
@@ -106,13 +106,11 @@ impl ShellCommandHandler {
         turn_context: &TurnContext,
         thread_id: ThreadId,
         allow_login_shell: bool,
-        environment_shell: Option<&str>,
+        environment_shell: Option<&Shell>,
     ) -> Result<ExecParams, FunctionCallError> {
         let owned_env_shell;
         let shell: &Shell = if let Some(shell_path) = environment_shell {
-            owned_env_shell = crate::shell::get_shell_by_model_provided_path(
-                &std::path::PathBuf::from(shell_path),
-            );
+            owned_env_shell = shell_path.clone();
             &owned_env_shell
         } else {
             // SAFETY: Arc<Shell> lives for the duration of this call; the
@@ -220,7 +218,7 @@ impl ShellCommandHandler {
         #[allow(deprecated)]
         let base_cwd = resolved_environment
             .as_ref()
-            .map(|environment| environment.cwd.clone())
+            .map(|environment| environment.cwd().clone())
             .unwrap_or_else(|| turn.cwd.clone());
         let cwd = resolve_workdir_base_path(&arguments, &base_cwd)?;
         let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
@@ -248,7 +246,7 @@ impl ShellCommandHandler {
             turn.config.permissions.allow_login_shell,
             resolved_environment
                 .as_ref()
-                .and_then(|environment| environment.shell.as_deref()),
+                .and_then(|environment| environment.shell.as_ref()),
         )?;
         // Use the parsed workdir for the effective tool target so hooks,
         // sandboxing, and event emission all agree on the same cwd.
