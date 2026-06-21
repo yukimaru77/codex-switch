@@ -18,9 +18,26 @@ use core_test_support::test_codex::test_codex;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
+use std::future::Future;
 use tokio::time::Duration;
 
 const STATUS_NOTE: &str = "This is read-only status. Compatible environment-aware tool calls that omit environment_id use default_execution_environment_id for this thread; pass a listed environment_id explicitly to target a different registered environment.";
+
+fn run_env_status_test(future: impl Future<Output = Result<()>> + Send + 'static) -> Result<()> {
+    std::thread::Builder::new()
+        .name("env-status-test".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime")
+                .block_on(future)
+        })
+        .expect("spawn env_status test thread")
+        .join()
+        .expect("env_status test thread panicked")
+}
 
 fn tool_names(body: &Value) -> Vec<String> {
     body.get("tools")
@@ -94,8 +111,12 @@ fn seed_thread_remote_environment(
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn env_list_reports_local_switch_state_through_tool_dispatch() -> Result<()> {
+#[test]
+fn env_list_reports_local_switch_state_through_tool_dispatch() -> Result<()> {
+    run_env_status_test(env_list_reports_local_switch_state_through_tool_dispatch_inner())
+}
+
+async fn env_list_reports_local_switch_state_through_tool_dispatch_inner() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -164,7 +185,13 @@ async fn env_list_reports_local_switch_state_through_tool_dispatch() -> Result<(
         "unexpected env_switch output: {switch_output}",
     );
 
-    let status: Value = serde_json::from_str(&list_output)?;
+    let mut status: Value = serde_json::from_str(&list_output)?;
+    let local_shell = &mut status["environments"][0]["shell"];
+    assert!(
+        local_shell.is_null() || local_shell.is_string(),
+        "local shell should be null or a detected shell path: {local_shell}",
+    );
+    *local_shell = Value::Null;
 
     assert_eq!(
         status,
@@ -191,8 +218,12 @@ async fn env_list_reports_local_switch_state_through_tool_dispatch() -> Result<(
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn env_status_reports_thread_visible_dynamic_environment() -> Result<()> {
+#[test]
+fn env_status_reports_thread_visible_dynamic_environment() -> Result<()> {
+    run_env_status_test(env_status_reports_thread_visible_dynamic_environment_inner())
+}
+
+async fn env_status_reports_thread_visible_dynamic_environment_inner() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -266,8 +297,12 @@ async fn env_status_reports_thread_visible_dynamic_environment() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn spawned_agent_env_status_inherits_parent_thread_environment_cursor() -> Result<()> {
+#[test]
+fn spawned_agent_env_status_inherits_parent_thread_environment_cursor() -> Result<()> {
+    run_env_status_test(spawned_agent_env_status_inherits_parent_thread_environment_cursor_inner())
+}
+
+async fn spawned_agent_env_status_inherits_parent_thread_environment_cursor_inner() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     const PARENT_PROMPT: &str = "spawn a child to inspect env status";
