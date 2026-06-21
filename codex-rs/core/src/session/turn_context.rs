@@ -691,6 +691,9 @@ impl Session {
         final_output_json_schema: Option<Option<Value>>,
         multi_agent_runtime: TurnMultiAgentRuntime,
     ) -> Arc<TurnContext> {
+        self.services
+            .turn_environments
+            .update_selections(session_configuration.environment_selections());
         let turn_environments = self.services.turn_environments.snapshot().await;
         let cwd = turn_environments
             .single_local_environment_cwd()
