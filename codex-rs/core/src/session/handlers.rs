@@ -735,8 +735,9 @@ pub(super) async fn submission_loop(
     while let Ok(sub) = rx_sub.recv().await {
         debug!(?sub, "Submission");
         let dispatch_span = submission_dispatch_span(&sub);
-        let should_exit = async {
-            match sub.op.clone() {
+        let should_exit = Box::pin(
+            async {
+                match sub.op.clone() {
                 Op::Interrupt => {
                     interrupt(&sess).await;
                     false
@@ -874,9 +875,10 @@ pub(super) async fn submission_loop(
                     false
                 }
                 _ => false, // Ignore unknown ops; enum is non_exhaustive to allow extensions.
+                }
             }
-        }
-        .instrument(dispatch_span)
+            .instrument(dispatch_span),
+        )
         .await;
         if should_exit {
             shutdown_received = true;
