@@ -56,7 +56,6 @@ use codex_config::types::AuthKeyringBackendKind;
 use codex_config::types::OAuthCredentialsStoreMode;
 use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentManager;
-use codex_exec_server::FileSystemSandboxContext;
 use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_extension_api::ExtensionDataInit;
 use codex_extension_api::LoadedUserInstructions;
@@ -491,11 +490,13 @@ impl Codex {
         if let Some(trace) = parent_trace.as_ref() {
             let _ = set_parent_from_w3c_trace_context(&thread_spawn_span, trace);
         }
-        Self::spawn_internal(CodexSpawnArgs {
-            parent_trace,
-            ..args
-        })
-        .instrument(thread_spawn_span)
+        Box::pin(
+            Self::spawn_internal(CodexSpawnArgs {
+                parent_trace,
+                ..args
+            })
+            .instrument(thread_spawn_span),
+        )
         .await
     }
 
@@ -726,9 +727,11 @@ impl Codex {
         // This task will run until Op::Shutdown is received.
         let session_for_loop = Arc::clone(&session);
         let session_loop_handle = tokio::spawn(async move {
-            submission_loop(session_for_loop, config, rx_sub)
-                .instrument(info_span!("session_loop", thread_id = %thread_id))
-                .await;
+            Box::pin(
+                submission_loop(session_for_loop, config, rx_sub)
+                    .instrument(info_span!("session_loop", thread_id = %thread_id)),
+            )
+            .await;
         });
         let codex = Codex {
             tx_sub,
