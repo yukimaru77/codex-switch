@@ -512,6 +512,9 @@
             "enable_request_compression": {
               "type": "boolean"
             },
+            "env_switch": {
+              "type": "boolean"
+            },
             "exec_permission_approvals": {
               "type": "boolean"
             },
@@ -4951,6 +4954,9 @@
           "type": "boolean"
         },
         "enable_request_compression": {
+          "type": "boolean"
+        },
+        "env_switch": {
           "type": "boolean"
         },
         "exec_permission_approvals": {
