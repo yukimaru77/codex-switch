@@ -620,15 +620,6 @@ impl Session {
             otel.name = "session_init.auth_mcp",
         ));
 
-        let plugin_and_skill_warmup_fut = warm_plugins_and_skills_for_session_init(
-            Arc::clone(&config),
-            Arc::clone(&plugins_manager),
-            Arc::clone(&skills_manager),
-        )
-        .instrument(info_span!(
-            "session_init.plugin_skill_warmup",
-            otel.name = "session_init.plugin_skill_warmup",
-        ));
         // Join all independent futures.
         let (
             thread_persistence_result,
@@ -819,7 +810,7 @@ impl Session {
                 ShellSnapshot::disabled()
             };
             let turn_environments = Arc::new(ThreadEnvironments::new(
-                environment_manager,
+                Arc::clone(&environment_manager),
                 default_shell.clone(),
                 shell_snapshot,
                 inherited_environments.unwrap_or_default(),
@@ -835,7 +826,16 @@ impl Session {
                 &instruction_environments,
             )
             .await;
-            let plugin_skill_errors = plugin_and_skill_warmup_fut.await;
+            let plugin_skill_errors = warm_plugins_and_skills_for_session_init(
+                Arc::clone(&config),
+                Arc::clone(&plugins_manager),
+                Arc::clone(&skills_manager),
+            )
+            .instrument(info_span!(
+                "session_init.plugin_skill_warmup",
+                otel.name = "session_init.plugin_skill_warmup",
+            ))
+            .await;
             for err in &plugin_skill_errors {
                 error!(
                     "failed to load skill {}: {}",

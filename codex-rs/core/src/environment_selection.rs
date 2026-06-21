@@ -1,10 +1,8 @@
 use std::collections::HashSet;
-#[cfg(test)]
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use codex_exec_server::EnvironmentManager;
-use codex_exec_server::ExecutorFileSystem;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::protocol::TurnEnvironmentSelection;
@@ -136,7 +134,15 @@ impl ThreadEnvironments {
             .ok_or_else(|| {
                 CodexErr::InvalidRequest(format!("unknown turn environment id `{environment_id}`"))
             })?;
-        let shell = if environment.is_remote() {
+        let metadata_shell = environment_manager
+            .get_environment_metadata(&environment_id)
+            .and_then(|metadata| metadata.shell)
+            .map(|shell| {
+                crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
+            });
+        let shell = if metadata_shell.is_some() {
+            metadata_shell
+        } else if environment.is_remote() {
             match environment.info().await {
                 Ok(info) => match Shell::from_environment_shell_info(info.shell) {
                     Ok(shell) => Some(shell),
@@ -214,11 +220,6 @@ impl TurnEnvironmentSnapshot {
             .collect()
     }
 
-    pub(crate) fn primary_filesystem(&self) -> Option<Arc<dyn ExecutorFileSystem>> {
-        self.primary()
-            .map(|environment| environment.environment.get_filesystem())
-    }
-
     pub(crate) fn single_local_environment(&self) -> Option<&TurnEnvironment> {
         let [environment] = self.turn_environments.as_slice() else {
             return None;
@@ -261,11 +262,9 @@ fn resolve_environment_selections(
                     selected_environment.cwd
                 ))
             })?);
-        let shell = metadata
-            .and_then(|metadata| metadata.shell)
-            .map(|shell| {
-                crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
-            });
+        let shell = metadata.and_then(|metadata| metadata.shell).map(|shell| {
+            crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
+        });
         turn_environments.push(TurnEnvironment::new(
             environment_id,
             environment,
@@ -494,7 +493,6 @@ url = "ws://127.0.0.1:8765"
                 cwd: cwd_uri,
             }],
         )
-        .await
         .expect("remote environment should resolve");
 
         assert_eq!(
