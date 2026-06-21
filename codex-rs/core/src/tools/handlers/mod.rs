@@ -50,6 +50,7 @@ use serde::Deserialize;
 use serde_json::Map;
 use serde_json::Value;
 use std::path::Path;
+use std::path::PathBuf;
 
 use crate::function_tool::FunctionCallError;
 use crate::sandboxing::SandboxPermissions;
@@ -235,7 +236,9 @@ fn turn_environment_from_env_switch_metadata(
     })?;
     let shell = meta
         .shell
-        .map(|shell| crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell)));
+        .map(|shell| {
+            crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
+        });
     Ok(TurnEnvironment::new(
         environment_id.to_string(),
         environment,
