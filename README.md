@@ -14,6 +14,12 @@ Codex にはファイル編集、画像読み取り、検索などの便利な�
 
 `env_switch` は、Codex のツール実行先を SSH 先、Docker コンテナ内、さらにそのネスト環境へ切り替えられるようにします。
 
+`env_switch` changes the execution environment for these Codex tools:
+
+- shell execution: `exec_command`, `write_stdin`
+- file changes: `apply_patch`
+- image reading: `view_image`
+
 ## Demo
 
 ![env_switch demo](docs/assets/env-switch-demo.gif)
@@ -30,11 +36,3 @@ cargo build -p codex-cli --bin codex
 ```shell
 ./target/debug/codex --yolo
 ```
-
-## Supported tools
-
-`env_switch` changes the execution environment for these Codex tools:
-
-- shell execution: `exec_command`, `write_stdin`
-- file changes: `apply_patch`
-- image reading: `view_image`
