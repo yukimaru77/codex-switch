@@ -16,11 +16,7 @@ Codex にはファイル編集、画像読み取り、検索などの便利な�
 
 ## Demo
 
-TODO: デモ GIF を追加する。
-
-```markdown
 ![env_switch demo](docs/assets/env-switch-demo.gif)
-```
 
 ## Build
 
@@ -33,25 +29,4 @@ cargo build -p codex-cli --bin codex
 
 ```shell
 ./target/debug/codex --yolo
-```
-
-## Demo GIF の撮影方法
-
-macOS なら画面収録で動画を撮れます。
-
-1. `Shift + Command + 5` を押す
-2. 収録範囲を選ぶ
-3. Codex で `env_switch` を使う様子を録画する
-4. 保存された `.mov` を GIF に変換する
-
-`ffmpeg` がある場合:
-
-```shell
-ffmpeg -i demo.mov -vf "fps=12,scale=1200:-1:flags=lanczos" docs/assets/env-switch-demo.gif
-```
-
-GIF を置くディレクトリがなければ作成します。
-
-```shell
-mkdir -p docs/assets
 ```
