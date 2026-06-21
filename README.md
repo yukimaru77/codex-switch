@@ -1,18 +1,18 @@
 # Codex env_switch
 
-このプロジェクトは Codex に `env_switch` ツールを持たせるための fork です。
+This project is a fork of Codex that adds a built-in `env_switch` tool.
 
-`env_switch` は、人間が `ssh hoge` や `docker exec -it hoge bash` で別環境のシェルに入る体験を、Codex の組み込みツールにも与えるものです。
+`env_switch` gives Codex's built-in tools the same kind of experience a human gets by entering another environment with commands like `ssh host` or `docker exec -it container bash`.
 
-Codex にはファイル編集、画像読み取り、検索などの便利な組み込みツールがあります。しかし通常、それらはローカル環境にしか使えません。たとえば SSH 先のファイルを書き換える場合、Codex は `ssh host "..."` のような shell コマンドを書く必要があります。
+Codex has useful built-in tools for shell execution, file editing, image reading, and more. However, those tools normally operate only on the local environment. For example, editing a file on an SSH host usually requires Codex to write shell commands such as `ssh host "..."`.
 
-この方法には次の問題があります。
+That approach has several problems:
 
-- 毎回 `ssh` や `docker exec` を書くのでトークン効率が悪い
-- shell の出力が曖昧になりやすい
-- ファイル編集や画像読み取りなど、Codex の組み込みツールの強みを活かしにくい
+- It wastes tokens because every command has to be wrapped in `ssh` or `docker exec`
+- Shell output can become ambiguous or unstable
+- It makes it harder to use Codex's built-in tools for file editing, image reading, and similar tasks
 
-`env_switch` は、Codex のツール実行先を SSH 先、Docker コンテナ内、さらにそのネスト環境へ切り替えられるようにします。
+`env_switch` lets Codex switch the execution target of its tools to an SSH host, a Docker container, or a nested environment.
 
 `env_switch` changes the execution environment for these Codex tools:
 
@@ -31,7 +31,7 @@ cd codex-rs
 cargo build -p codex-cli --bin codex
 ```
 
-ビルドした Codex を起動するには:
+Run the built Codex binary with:
 
 ```shell
 ./target/debug/codex --yolo
