@@ -57,7 +57,6 @@ struct EnvironmentStatusEntry {
     shell: Option<String>,
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for EnvStatusHandler {
     fn tool_name(&self) -> ToolName {
         ToolName::plain(ENV_STATUS_TOOL_NAME)
@@ -67,17 +66,13 @@ impl ToolExecutor<ToolInvocation> for EnvStatusHandler {
         create_env_status_tool()
     }
 
-    async fn handle(
-        &self,
-        invocation: ToolInvocation,
-    ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
-        handle_environment_status(invocation, ENV_STATUS_TOOL_NAME)
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
+        Box::pin(async move { handle_environment_status(invocation, ENV_STATUS_TOOL_NAME) })
     }
 }
 
 impl CoreToolRuntime for EnvStatusHandler {}
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for EnvListHandler {
     fn tool_name(&self) -> ToolName {
         ToolName::plain(ENV_LIST_TOOL_NAME)
@@ -87,11 +82,8 @@ impl ToolExecutor<ToolInvocation> for EnvListHandler {
         create_env_list_tool()
     }
 
-    async fn handle(
-        &self,
-        invocation: ToolInvocation,
-    ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
-        handle_environment_status(invocation, ENV_LIST_TOOL_NAME)
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
+        Box::pin(async move { handle_environment_status(invocation, ENV_LIST_TOOL_NAME) })
     }
 }
 
@@ -129,8 +121,11 @@ fn build_env_status_output(session: &Session, turn: &TurnContext) -> EnvStatusOu
             (
                 environment.environment_id.clone(),
                 TurnEnvironmentStatus {
-                    cwd: environment.cwd.to_string_lossy().into_owned(),
-                    shell: environment.shell.clone(),
+                    cwd: environment.cwd().to_string_lossy().into_owned(),
+                    shell: environment
+                        .shell
+                        .as_ref()
+                        .map(|shell| shell.shell_path.to_string_lossy().into_owned()),
                     selected_for_turn: true,
                 },
             )
