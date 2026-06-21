@@ -30,3 +30,11 @@ cargo build -p codex-cli --bin codex
 ```shell
 ./target/debug/codex --yolo
 ```
+
+## Supported tools
+
+`env_switch` changes the execution environment for these Codex tools:
+
+- shell execution: `exec_command`, `write_stdin`
+- file changes: `apply_patch`
+- image reading: `view_image`
