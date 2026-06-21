@@ -7151,7 +7151,7 @@ async fn remote_primary_environment_does_not_retarget_turn_context_cwd() {
         .primary()
         .expect("primary environment should be set");
     assert_eq!(primary_environment.environment_id, "ssh:mine");
-    assert_eq!(primary_environment.cwd, remote_cwd);
+    assert_eq!(primary_environment.cwd(), &remote_cwd);
     #[allow(deprecated)]
     let turn_cwd = turn_context.cwd.clone();
     assert_eq!(turn_cwd, local_cwd);
