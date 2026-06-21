@@ -1326,6 +1326,7 @@ url = "ws://127.0.0.1:8765"
                 cwd: cwd_uri,
             }],
         )
+        .await
         .expect("remote environment should resolve");
 
         assert_eq!(
