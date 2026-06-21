@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
-#[cfg(test)]
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -284,12 +283,20 @@ impl ThreadEnvironments {
                 } else {
                     (None, None)
                 };
+            let metadata_shell = self
+                .environment_manager
+                .get_environment_metadata(environment_id)
+                .and_then(|metadata| metadata.shell)
+                .map(|shell| {
+                    crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
+                });
             let (resolution_task, resolution) = Self::resolve_environment(
                 selected_environment.clone(),
                 Arc::clone(&environment),
                 self.local_shell.clone(),
                 self.shell_snapshot.clone(),
                 configuration_ready,
+                metadata_shell,
             )
             .remote_handle();
             drop(tokio::spawn(
@@ -515,6 +522,7 @@ impl ThreadEnvironments {
         local_shell: Shell,
         shell_snapshot: ShellSnapshot,
         configuration_ready: Option<mpsc::Receiver<PendingConfigurationResult>>,
+        metadata_shell: Option<Shell>,
     ) -> TurnEnvironmentResult {
         let environment_id = &selection.environment_id;
         if let EnvironmentConfigState::Failed(error) = &selection.config {
@@ -543,10 +551,19 @@ impl ThreadEnvironments {
         };
         // Resolve the attachment only after both prerequisites are ready.
         let ((), installed_config) = tokio::try_join!(connection_ready, configuration_ready)?;
-        let shell = if environment.is_remote() {
+        let shell = if metadata_shell.is_some() {
+            metadata_shell
+        } else if environment.is_remote() {
             match environment.info().await {
                 Ok(info) => match Shell::from_environment_shell_info(info.shell) {
                     Ok(shell) => Some(shell),
+                        Err(err) => {
+                            tracing::warn!(
+                                "failed to resolve shell for environment `{environment_id}`: {err}"
+                            );
+                            None
+                        }
+                    },
                     Err(err) => {
                         tracing::warn!(
                             "failed to resolve shell for environment `{environment_id}`: {err}"
@@ -774,11 +791,6 @@ impl TurnEnvironmentSnapshot {
             .collect()
     }
 
-    pub(crate) fn primary_filesystem(&self) -> Option<Arc<dyn ExecutorFileSystem>> {
-        self.primary()
-            .map(|environment| environment.environment.get_filesystem())
-    }
-
     pub(crate) fn single_local_environment(&self) -> Option<&TurnEnvironment> {
         if self.starting().next().is_some() {
             return None;
@@ -828,11 +840,9 @@ fn resolve_environment_selections(
                     selected_environment.cwd
                 ))
             })?);
-        let shell = metadata
-            .and_then(|metadata| metadata.shell)
-            .map(|shell| {
-                crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
-            });
+        let shell = metadata.and_then(|metadata| metadata.shell).map(|shell| {
+            crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
+        });
         turn_environments.push(TurnEnvironment::new(
             environment_id,
             environment,
@@ -1183,7 +1193,6 @@ url = "ws://127.0.0.1:8765"
                 cwd: cwd_uri,
             }],
         )
-        .await
         .expect("remote environment should resolve");
 
         assert_eq!(
