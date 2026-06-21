@@ -724,136 +724,150 @@ pub(super) async fn submission_loop(
     while let Ok(sub) = rx_sub.recv().await {
         debug!(?sub, "Submission");
         let dispatch_span = submission_dispatch_span(&sub);
-        let should_exit = async {
-            match sub.op.clone() {
-                Op::Interrupt => {
-                    interrupt(&sess).await;
-                    false
-                }
-                Op::CleanBackgroundTerminals => {
-                    clean_background_terminals(&sess).await;
-                    false
-                }
-                Op::RealtimeConversationStart(params) => {
-                    if let Err(err) =
-                        handle_realtime_conversation_start(&sess, sub.id.clone(), params).await
-                    {
-                        sess.send_event_raw(Event {
-                            id: sub.id.clone(),
-                            msg: EventMsg::Error(ErrorEvent {
-                                message: err.to_string(),
-                                codex_error_info: Some(CodexErrorInfo::Other),
-                            }),
-                        })
-                        .await;
+        let should_exit = Box::pin(
+            async {
+                match sub.op.clone() {
+                    Op::Interrupt => {
+                        interrupt(&sess).await;
+                        false
                     }
-                    false
-                }
-                Op::RealtimeConversationAudio(params) => {
-                    handle_realtime_conversation_audio(&sess, sub.id.clone(), params).await;
-                    false
-                }
-                Op::RealtimeConversationText(params) => {
-                    handle_realtime_conversation_text(&sess, sub.id.clone(), params).await;
-                    false
-                }
-                Op::RealtimeConversationSpeech(params) => {
-                    handle_realtime_conversation_speech(&sess, sub.id.clone(), params).await;
-                    false
-                }
-                Op::RealtimeConversationClose => {
-                    handle_realtime_conversation_close(&sess, sub.id.clone()).await;
-                    false
-                }
-                Op::RealtimeConversationListVoices => {
-                    realtime_conversation_list_voices(&sess, sub.id.clone()).await;
-                    false
-                }
-                Op::UserInput { .. } => {
-                    user_input_or_turn(&sess, sub.id.clone(), sub.op, sub.client_user_message_id)
+                    Op::CleanBackgroundTerminals => {
+                        clean_background_terminals(&sess).await;
+                        false
+                    }
+                    Op::RealtimeConversationStart(params) => {
+                        if let Err(err) =
+                            handle_realtime_conversation_start(&sess, sub.id.clone(), params).await
+                        {
+                            sess.send_event_raw(Event {
+                                id: sub.id.clone(),
+                                msg: EventMsg::Error(ErrorEvent {
+                                    message: err.to_string(),
+                                    codex_error_info: Some(CodexErrorInfo::Other),
+                                }),
+                            })
+                            .await;
+                        }
+                        false
+                    }
+                    Op::RealtimeConversationAudio(params) => {
+                        handle_realtime_conversation_audio(&sess, sub.id.clone(), params).await;
+                        false
+                    }
+                    Op::RealtimeConversationText(params) => {
+                        handle_realtime_conversation_text(&sess, sub.id.clone(), params).await;
+                        false
+                    }
+                    Op::RealtimeConversationSpeech(params) => {
+                        handle_realtime_conversation_speech(&sess, sub.id.clone(), params).await;
+                        false
+                    }
+                    Op::RealtimeConversationClose => {
+                        handle_realtime_conversation_close(&sess, sub.id.clone()).await;
+                        false
+                    }
+                    Op::RealtimeConversationListVoices => {
+                        realtime_conversation_list_voices(&sess, sub.id.clone()).await;
+                        false
+                    }
+                    Op::UserInput { .. } => {
+                        user_input_or_turn(
+                            &sess,
+                            sub.id.clone(),
+                            sub.op,
+                            sub.client_user_message_id,
+                        )
                         .await;
-                    false
-                }
-                Op::ThreadSettings { thread_settings } => {
-                    update_thread_settings(&sess, sub.id.clone(), thread_settings).await;
-                    false
-                }
-                Op::InterAgentCommunication { communication } => {
-                    inter_agent_communication(&sess, sub.id.clone(), communication).await;
-                    false
-                }
-                Op::ExecApproval {
-                    id: approval_id,
-                    turn_id,
-                    decision,
-                } => {
-                    exec_approval(&sess, approval_id, turn_id, decision).await;
-                    false
-                }
-                Op::PatchApproval { id, decision } => {
-                    patch_approval(&sess, id, decision).await;
-                    false
-                }
-                Op::UserInputAnswer { id, response } => {
-                    request_user_input_response(&sess, id, response).await;
-                    false
-                }
-                Op::RequestPermissionsResponse { id, response } => {
-                    request_permissions_response(&sess, id, response).await;
-                    false
-                }
-                Op::DynamicToolResponse { id, response } => {
-                    dynamic_tool_response(&sess, id, response).await;
-                    false
-                }
-                Op::RefreshMcpServers => {
-                    refresh_mcp_servers(&sess);
-                    false
-                }
-                Op::ReloadUserConfig => {
-                    reload_user_config(&sess).await;
-                    false
-                }
-                Op::Compact => {
-                    compact(&sess, sub.id.clone()).await;
-                    false
-                }
-                Op::ThreadRollback { num_turns } => {
-                    thread_rollback(&sess, sub.id.clone(), num_turns).await;
-                    false
-                }
-                Op::SetThreadMemoryMode { mode } => {
-                    set_thread_memory_mode(&sess, sub.id.clone(), mode).await;
-                    false
-                }
-                Op::RunUserShellCommand { command } => {
-                    run_user_shell_command(&sess, sub.id.clone(), command).await;
-                    false
-                }
-                Op::ResolveElicitation {
-                    server_name,
-                    request_id,
-                    decision,
-                    content,
-                    meta,
-                } => {
-                    resolve_elicitation(&sess, server_name, request_id, decision, content, meta)
+                        false
+                    }
+                    Op::ThreadSettings { thread_settings } => {
+                        update_thread_settings(&sess, sub.id.clone(), thread_settings).await;
+                        false
+                    }
+                    Op::InterAgentCommunication { communication } => {
+                        inter_agent_communication(&sess, sub.id.clone(), communication).await;
+                        false
+                    }
+                    Op::ExecApproval {
+                        id: approval_id,
+                        turn_id,
+                        decision,
+                    } => {
+                        exec_approval(&sess, approval_id, turn_id, decision).await;
+                        false
+                    }
+                    Op::PatchApproval { id, decision } => {
+                        patch_approval(&sess, id, decision).await;
+                        false
+                    }
+                    Op::UserInputAnswer { id, response } => {
+                        request_user_input_response(&sess, id, response).await;
+                        false
+                    }
+                    Op::RequestPermissionsResponse { id, response } => {
+                        request_permissions_response(&sess, id, response).await;
+                        false
+                    }
+                    Op::DynamicToolResponse { id, response } => {
+                        dynamic_tool_response(&sess, id, response).await;
+                        false
+                    }
+                    Op::RefreshMcpServers => {
+                        refresh_mcp_servers(&sess);
+                        false
+                    }
+                    Op::ReloadUserConfig => {
+                        reload_user_config(&sess).await;
+                        false
+                    }
+                    Op::Compact => {
+                        compact(&sess, sub.id.clone()).await;
+                        false
+                    }
+                    Op::ThreadRollback { num_turns } => {
+                        thread_rollback(&sess, sub.id.clone(), num_turns).await;
+                        false
+                    }
+                    Op::SetThreadMemoryMode { mode } => {
+                        set_thread_memory_mode(&sess, sub.id.clone(), mode).await;
+                        false
+                    }
+                    Op::RunUserShellCommand { command } => {
+                        run_user_shell_command(&sess, sub.id.clone(), command).await;
+                        false
+                    }
+                    Op::ResolveElicitation {
+                        server_name,
+                        request_id,
+                        decision,
+                        content,
+                        meta,
+                    } => {
+                        resolve_elicitation(
+                            &sess,
+                            server_name,
+                            request_id,
+                            decision,
+                            content,
+                            meta,
+                        )
                         .await;
-                    false
+                        false
+                    }
+                    Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
+                    Op::Review { review_request } => {
+                        review(&sess, &config, sub.id.clone(), review_request).await;
+                        false
+                    }
+                    Op::ApproveGuardianDeniedAction { event } => {
+                        approve_guardian_denied_action(&sess, event).await;
+                        false
+                    }
+                    _ => false, // Ignore unknown ops; enum is non_exhaustive to allow extensions.
                 }
-                Op::Shutdown => shutdown(&sess, sub.id.clone()).await,
-                Op::Review { review_request } => {
-                    review(&sess, &config, sub.id.clone(), review_request).await;
-                    false
-                }
-                Op::ApproveGuardianDeniedAction { event } => {
-                    approve_guardian_denied_action(&sess, event).await;
-                    false
-                }
-                _ => false, // Ignore unknown ops; enum is non_exhaustive to allow extensions.
             }
-        }
-        .instrument(dispatch_span)
+            .instrument(dispatch_span),
+        )
         .await;
         if should_exit {
             shutdown_received = true;
