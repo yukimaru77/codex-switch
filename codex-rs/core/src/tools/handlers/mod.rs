@@ -243,7 +243,7 @@ fn turn_environment_from_env_switch_metadata(
     Ok(TurnEnvironment::new(
         environment_id.to_string(),
         environment,
-        cwd,
+        cwd.into(),
         shell,
     ))
 }
@@ -310,7 +310,7 @@ pub(crate) async fn resolve_tool_environment(
             return Ok(Some(TurnEnvironment::new(
                 LOCAL_ENVIRONMENT_ID.to_string(),
                 environment,
-                cwd,
+                cwd.into(),
                 None,
             )));
         }
@@ -721,7 +721,11 @@ mod tests {
         let thread_key = session.thread_id.to_string();
         let manager = &session.services.environment_manager;
         manager
-            .upsert_environment("ssh:mine".to_string(), "ws://127.0.0.1:8765".to_string())
+            .upsert_environment(
+                "ssh:mine".to_string(),
+                "ws://127.0.0.1:8765".to_string(),
+                None,
+            )
             .expect("seed remote environment");
         manager.set_thread_environment_metadata(
             thread_key.clone(),
@@ -760,7 +764,11 @@ mod tests {
         let thread_key = session.thread_id.to_string();
         let manager = &session.services.environment_manager;
         manager
-            .upsert_environment("ssh:mine".to_string(), "ws://127.0.0.1:8765".to_string())
+            .upsert_environment(
+                "ssh:mine".to_string(),
+                "ws://127.0.0.1:8765".to_string(),
+                None,
+            )
             .expect("seed remote environment");
         turn.environments
             .turn_environments
@@ -770,7 +778,9 @@ mod tests {
                     Environment::create_for_tests(Some("ws://127.0.0.1:8765".to_string()))
                         .expect("remote environment"),
                 ),
-                AbsolutePathBuf::from_absolute_path("/old").expect("old cwd"),
+                AbsolutePathBuf::from_absolute_path("/old")
+                    .expect("old cwd")
+                    .into(),
                 None,
             ));
         manager.set_environment_metadata(
