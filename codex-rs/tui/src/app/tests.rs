@@ -1304,6 +1304,7 @@ fn env_switch_thread_settings_updated(thread_id: ThreadId) -> ServerNotification
                 },
             },
             personality: None,
+            multi_agent_mode: Default::default(),
             active_environment_id: Some("ssh:example-host".to_string()),
         },
     })
