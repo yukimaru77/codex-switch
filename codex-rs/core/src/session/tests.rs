@@ -7829,7 +7829,11 @@ async fn remote_primary_environment_does_not_retarget_turn_context_cwd() {
     session
         .services
         .environment_manager
-        .upsert_environment("ssh:mine".to_string(), "ws://127.0.0.1:8765".to_string())
+        .upsert_environment(
+            "ssh:mine".to_string(),
+            "ws://127.0.0.1:8765".to_string(),
+            None,
+        )
         .expect("seed remote environment");
     session
         .services
@@ -7867,7 +7871,10 @@ async fn remote_primary_environment_does_not_retarget_turn_context_cwd() {
         .primary()
         .expect("primary environment should be set");
     assert_eq!(primary_environment.environment_id, "ssh:mine");
-    assert_eq!(primary_environment.cwd(), &remote_cwd);
+    assert_eq!(
+        primary_environment.cwd(),
+        &PathUri::from_abs_path(&remote_cwd)
+    );
     #[allow(deprecated)]
     let turn_cwd = turn_context.cwd.clone();
     assert_eq!(turn_cwd, local_cwd);

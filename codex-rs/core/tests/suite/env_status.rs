@@ -23,7 +23,11 @@ use tokio::time::Duration;
 
 const STATUS_NOTE: &str = "This is read-only status. Compatible environment-aware tool calls that omit environment_id use default_execution_environment_id for this thread; pass a listed environment_id explicitly to target a different registered environment.";
 
-fn run_env_status_test(future: impl Future<Output = Result<()>> + Send + 'static) -> Result<()> {
+fn run_env_status_test<F, Fut>(make_future: F) -> Result<()>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<()>> + 'static,
+{
     std::thread::Builder::new()
         .name("env-status-test".to_string())
         .stack_size(8 * 1024 * 1024)
@@ -32,7 +36,7 @@ fn run_env_status_test(future: impl Future<Output = Result<()>> + Send + 'static
                 .enable_all()
                 .build()
                 .expect("tokio runtime")
-                .block_on(future)
+                .block_on(make_future())
         })
         .expect("spawn env_status test thread")
         .join()
@@ -97,6 +101,7 @@ fn seed_thread_remote_environment(
         .upsert_environment(
             environment_id.to_string(),
             "ws://127.0.0.1:9876".to_string(),
+            None,
         )
         .context("seed remote environment")?;
     manager.set_environment_metadata(
@@ -113,7 +118,7 @@ fn seed_thread_remote_environment(
 
 #[test]
 fn env_list_reports_local_switch_state_through_tool_dispatch() -> Result<()> {
-    run_env_status_test(env_list_reports_local_switch_state_through_tool_dispatch_inner())
+    run_env_status_test(env_list_reports_local_switch_state_through_tool_dispatch_inner)
 }
 
 async fn env_list_reports_local_switch_state_through_tool_dispatch_inner() -> Result<()> {
@@ -220,7 +225,7 @@ async fn env_list_reports_local_switch_state_through_tool_dispatch_inner() -> Re
 
 #[test]
 fn env_status_reports_thread_visible_dynamic_environment() -> Result<()> {
-    run_env_status_test(env_status_reports_thread_visible_dynamic_environment_inner())
+    run_env_status_test(env_status_reports_thread_visible_dynamic_environment_inner)
 }
 
 async fn env_status_reports_thread_visible_dynamic_environment_inner() -> Result<()> {
@@ -299,7 +304,7 @@ async fn env_status_reports_thread_visible_dynamic_environment_inner() -> Result
 
 #[test]
 fn spawned_agent_env_status_inherits_parent_thread_environment_cursor() -> Result<()> {
-    run_env_status_test(spawned_agent_env_status_inherits_parent_thread_environment_cursor_inner())
+    run_env_status_test(spawned_agent_env_status_inherits_parent_thread_environment_cursor_inner)
 }
 
 async fn spawned_agent_env_status_inherits_parent_thread_environment_cursor_inner() -> Result<()> {
