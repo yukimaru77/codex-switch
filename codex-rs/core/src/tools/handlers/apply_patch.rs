@@ -432,7 +432,7 @@ async fn patch_verification_sandbox(
     }
     Some(turn.file_system_sandbox_context(
         patch_verification_permissions(session, environment_id, file_paths).await,
-        &codex_utils_path_uri::PathUri::from_abs_path(cwd),
+        cwd,
     ))
 }
 
