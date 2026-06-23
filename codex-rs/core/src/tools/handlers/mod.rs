@@ -296,9 +296,8 @@ pub(crate) async fn resolve_tool_environment(
     if env_id == LOCAL_ENVIRONMENT_ID {
         if let Some(found) = turn
             .environments
-            .turn_environments
-            .iter()
-            .find(|e| e.environment_id == LOCAL_ENVIRONMENT_ID)
+            .turn_environments()
+            .find(|environment| environment.environment_id == LOCAL_ENVIRONMENT_ID)
         {
             return Ok(Some(found.clone()));
         }
@@ -724,7 +723,11 @@ mod tests {
         let thread_key = session.thread_id.to_string();
         let manager = &session.services.environment_manager;
         manager
-            .upsert_environment("ssh:mine".to_string(), "ws://127.0.0.1:8765".to_string())
+            .upsert_environment(
+                "ssh:mine".to_string(),
+                "ws://127.0.0.1:8765".to_string(),
+                None,
+            )
             .expect("seed remote environment");
         manager.set_thread_environment_metadata(
             thread_key.clone(),
@@ -763,7 +766,11 @@ mod tests {
         let thread_key = session.thread_id.to_string();
         let manager = &session.services.environment_manager;
         manager
-            .upsert_environment("ssh:mine".to_string(), "ws://127.0.0.1:8765".to_string())
+            .upsert_environment(
+                "ssh:mine".to_string(),
+                "ws://127.0.0.1:8765".to_string(),
+                None,
+            )
             .expect("seed remote environment");
         turn.environments
             .turn_environments
@@ -773,7 +780,9 @@ mod tests {
                     Environment::create_for_tests(Some("ws://127.0.0.1:8765".to_string()))
                         .expect("remote environment"),
                 ),
-                AbsolutePathBuf::from_absolute_path("/old").expect("old cwd"),
+                AbsolutePathBuf::from_absolute_path("/old")
+                    .expect("old cwd")
+                    .into(),
                 None,
             ));
         manager.set_environment_metadata(

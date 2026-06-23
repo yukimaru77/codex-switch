@@ -193,7 +193,6 @@ fn spawn_agent_tool_v1_guides_remote_docker_delegation_without_raw_wrappers() {
         available_models: Vec::new(),
         agent_type_description: "role help".to_string(),
         hide_agent_type_model_reasoning: false,
-        include_usage_hint: true,
         usage_hint_text: None,
     });
 
