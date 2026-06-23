@@ -197,8 +197,7 @@ fn build_env_status_output_from_parts(
                 == Some(snapshot.environment_id.as_str());
             let is_last_env_switch =
                 last_env_switch_environment_id.as_deref() == Some(snapshot.environment_id.as_str());
-            let prefer_env_switch_metadata =
-                (is_default_execution_environment || is_last_env_switch) && metadata.is_some();
+            let prefer_env_switch_metadata = metadata.is_some();
             let (cwd, cwd_source) = match turn_environment {
                 Some(turn_environment) if !prefer_env_switch_metadata => {
                     (Some(turn_environment.cwd.clone()), "turn")
