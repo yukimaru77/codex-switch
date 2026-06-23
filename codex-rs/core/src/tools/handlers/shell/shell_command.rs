@@ -228,14 +228,14 @@ impl ShellCommandHandler {
         #[allow(deprecated)]
         let base_cwd = resolved_environment
             .as_ref()
-            .map(|environment| environment.cwd().clone())
+            .and_then(|environment| environment.cwd().to_abs_path().ok())
             .unwrap_or_else(|| turn.cwd.clone());
         let cwd = resolve_workdir_base_path(&arguments, &base_cwd)?;
         let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
         let advisory = remote_command_advisory(
             &params.command,
             RemoteCommandAdvisoryOptions {
-                env_switch_enabled: turn.features.enabled(Feature::EnvSwitch),
+                env_switch_enabled: turn.config.features.get().enabled(Feature::EnvSwitch),
             },
         )
         .map(str::to_string);
