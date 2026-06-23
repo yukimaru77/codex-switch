@@ -1596,6 +1596,7 @@ impl Session {
                 reasoning_summary: snapshot.reasoning_summary,
                 personality: snapshot.personality,
                 collaboration_mode: snapshot.collaboration_mode,
+                multi_agent_mode: snapshot.multi_agent_mode,
             },
         });
         let event_id = self.next_internal_sub_id();

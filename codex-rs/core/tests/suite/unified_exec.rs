@@ -56,9 +56,11 @@ use tokio::time::Duration;
 const UNIFIED_EXEC_LAGGED_OUTPUT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(unix)]
-fn run_env_switch_advisory_test(
-    future: impl Future<Output = Result<()>> + Send + 'static,
-) -> Result<()> {
+fn run_env_switch_advisory_test<F, Fut>(make_future: F) -> Result<()>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<()>> + 'static,
+{
     std::thread::Builder::new()
         .name("env-switch-advisory-test".to_string())
         .stack_size(8 * 1024 * 1024)
@@ -67,7 +69,7 @@ fn run_env_switch_advisory_test(
                 .enable_all()
                 .build()
                 .expect("tokio runtime")
-                .block_on(future)
+                .block_on(make_future())
         })
         .expect("spawn env_switch advisory test thread")
         .join()
@@ -613,7 +615,7 @@ async fn unified_exec_respects_workdir_override() -> Result<()> {
 #[test]
 #[serial(env_switch_advisory)]
 fn unified_exec_advises_env_switch_after_raw_ssh() -> Result<()> {
-    run_env_switch_advisory_test(unified_exec_advises_env_switch_after_raw_ssh_inner())
+    run_env_switch_advisory_test(unified_exec_advises_env_switch_after_raw_ssh_inner)
 }
 
 #[cfg(unix)]
@@ -691,9 +693,7 @@ async fn unified_exec_advises_env_switch_after_raw_ssh_inner() -> Result<()> {
 #[test]
 #[serial(env_switch_advisory)]
 fn unified_exec_advises_env_switch_with_explicit_environment_id() -> Result<()> {
-    run_env_switch_advisory_test(
-        unified_exec_advises_env_switch_with_explicit_environment_id_inner(),
-    )
+    run_env_switch_advisory_test(unified_exec_advises_env_switch_with_explicit_environment_id_inner)
 }
 
 #[cfg(unix)]
