@@ -258,13 +258,16 @@ fn turn_environment_from_env_switch_metadata(
 /// 2. `environment_id` is `Some(LOCAL_ENVIRONMENT_ID)` → return the frozen
 ///    local turn environment when present, otherwise synthesize a local
 ///    environment from the live manager when local support is configured.
-/// 3. `environment_id` is `Some(id)` and `id` is in `turn.environments.turn_environments` →
+/// 3. `environment_id` is `Some(id)` and `id` has current `env_switch`
+///    metadata visible to this thread → synthesize a `TurnEnvironment` using
+///    that metadata.
+/// 4. `environment_id` is `Some(id)` and `id` is in `turn.environments.turn_environments` →
 ///    clone and return it.
-/// 4. `environment_id` is `Some(id)`, not in `turn` but present in the live
+/// 5. `environment_id` is `Some(id)`, not in `turn` but present in the live
 ///    `EnvironmentManager` and recorded as visible to the current or parent
 ///    thread → synthesize a `TurnEnvironment` using the cwd and shell recorded
 ///    by `env_switch`.
-/// 5. Otherwise → "unknown turn environment id" error.
+/// 6. Otherwise → "unknown turn environment id" error.
 ///
 /// Returns an owned `TurnEnvironment` because synthesised values in case 4
 /// have no backing storage in `turn`.
@@ -327,6 +330,17 @@ pub(crate) async fn resolve_tool_environment(
     // id can be re-selected later with a different cwd/shell, while the turn
     // snapshot remains fixed for the duration of the turn.
     if implicit_from_env_switch {
+        return turn_environment_from_env_switch_metadata(session, turn, env_id).map(Some);
+    }
+
+    let thread_keys = environment_thread_keys(session, turn);
+    if dynamic_environment_visible_to_thread(session, turn, env_id)
+        && session
+            .services
+            .environment_manager
+            .get_thread_environment_metadata_for_keys(&thread_keys, env_id)
+            .is_some()
+    {
         return turn_environment_from_env_switch_metadata(session, turn, env_id).map(Some);
     }
 
