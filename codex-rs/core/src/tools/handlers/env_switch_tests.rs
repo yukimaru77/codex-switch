@@ -916,14 +916,14 @@ async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot
         .expect("explicit environment");
     assert_eq!(
         explicit.cwd().to_abs_path().expect("native cwd").as_path(),
-        std::path::Path::new("/old")
+        std::path::Path::new("/new")
     );
     assert_eq!(
         explicit
             .shell
             .as_ref()
             .map(|shell| shell.shell_path.as_path()),
-        Some(std::path::Path::new("/bin/bash"))
+        Some(std::path::Path::new("/bin/sh"))
     );
 }
 
