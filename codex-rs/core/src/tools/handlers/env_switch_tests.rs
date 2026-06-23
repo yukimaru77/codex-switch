@@ -726,7 +726,11 @@ async fn resolve_tool_environment_rejects_dynamic_environment_from_other_thread(
     let (session, turn) = crate::session::tests::make_session_and_context().await;
     let manager = &session.services.environment_manager;
     manager
-        .upsert_environment("ssh:other".to_string(), "ws://127.0.0.1:9876".to_string())
+        .upsert_environment(
+            "ssh:other".to_string(),
+            "ws://127.0.0.1:9876".to_string(),
+            None,
+        )
         .expect("seed remote environment");
     manager.record_thread_environment_id("other-thread".to_string(), "ssh:other".to_string());
     manager.set_thread_environment_metadata(
@@ -755,7 +759,11 @@ async fn resolve_tool_environment_errors_when_dynamic_metadata_is_missing() {
     let thread_key = session.thread_id.to_string();
     let manager = &session.services.environment_manager;
     manager
-        .upsert_environment("ssh:mine".to_string(), "ws://127.0.0.1:9876".to_string())
+        .upsert_environment(
+            "ssh:mine".to_string(),
+            "ws://127.0.0.1:9876".to_string(),
+            None,
+        )
         .expect("seed remote environment");
     manager.record_thread_environment_id(thread_key, "ssh:mine".to_string());
 
@@ -789,6 +797,7 @@ async fn resolve_tool_environment_uses_env_switch_default_and_explicit_override(
                         9876
                     }
                 ),
+                None,
             )
             .expect("seed remote environment");
         manager.set_thread_environment_metadata(
@@ -808,7 +817,10 @@ async fn resolve_tool_environment_uses_env_switch_default_and_explicit_override(
         .expect("implicit default should resolve")
         .expect("implicit environment");
     assert_eq!(implicit.environment_id, "ssh:mine");
-    assert_eq!(implicit.cwd().as_path(), std::path::Path::new("/mine"));
+    assert_eq!(
+        implicit.cwd().to_abs_path().expect("native cwd").as_path(),
+        std::path::Path::new("/mine")
+    );
     assert_eq!(
         implicit
             .shell
@@ -823,7 +835,10 @@ async fn resolve_tool_environment_uses_env_switch_default_and_explicit_override(
         .expect("explicit override should resolve")
         .expect("explicit environment");
     assert_eq!(explicit.environment_id, "docker:other");
-    assert_eq!(explicit.cwd().as_path(), std::path::Path::new("/other"));
+    assert_eq!(
+        explicit.cwd().to_abs_path().expect("native cwd").as_path(),
+        std::path::Path::new("/other")
+    );
 
     let local = resolve_tool_environment(
         &session,
@@ -850,14 +865,20 @@ async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot
             .expect("remote environment"),
     );
     manager
-        .upsert_environment("ssh:mine".to_string(), "ws://127.0.0.1:8765".to_string())
+        .upsert_environment(
+            "ssh:mine".to_string(),
+            "ws://127.0.0.1:8765".to_string(),
+            None,
+        )
         .expect("seed remote environment");
     turn.environments
         .turn_environments
         .push(crate::session::turn_context::TurnEnvironment::new(
             "ssh:mine".to_string(),
             environment,
-            AbsolutePathBuf::from_absolute_path("/old").expect("old cwd"),
+            AbsolutePathBuf::from_absolute_path("/old")
+                .expect("old cwd")
+                .into(),
             Some(crate::shell::get_shell_by_model_provided_path(
                 &std::path::PathBuf::from("/bin/bash"),
             )),
@@ -877,7 +898,10 @@ async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot
         .await
         .expect("implicit default should resolve")
         .expect("implicit environment");
-    assert_eq!(implicit.cwd().as_path(), std::path::Path::new("/new"));
+    assert_eq!(
+        implicit.cwd().to_abs_path().expect("native cwd").as_path(),
+        std::path::Path::new("/new")
+    );
     assert_eq!(
         implicit
             .shell
@@ -890,7 +914,10 @@ async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot
         .await
         .expect("explicit environment should resolve")
         .expect("explicit environment");
-    assert_eq!(explicit.cwd().as_path(), std::path::Path::new("/old"));
+    assert_eq!(
+        explicit.cwd().to_abs_path().expect("native cwd").as_path(),
+        std::path::Path::new("/old")
+    );
     assert_eq!(
         explicit
             .shell
