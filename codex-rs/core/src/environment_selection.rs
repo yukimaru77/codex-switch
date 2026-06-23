@@ -19,6 +19,10 @@ use codex_protocol::protocol::EnvironmentConfigState;
 use codex_protocol::protocol::EnvironmentConnectionEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
+#[cfg(test)]
+use codex_protocol::error::CodexErr;
+#[cfg(test)]
+use codex_protocol::error::Result as CodexResult;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;
@@ -780,12 +784,8 @@ fn resolve_environment_selections(
             .map(|metadata| AbsolutePathBuf::from_absolute_path_checked(&metadata.cwd))
             .transpose()
             .map_err(|err| CodexErr::InvalidRequest(err.to_string()))?
-            .unwrap_or(selected_environment.cwd.to_abs_path().map_err(|err| {
-                CodexErr::InvalidRequest(format!(
-                    "turn environment cwd `{}` is not valid on this host: {err}",
-                    selected_environment.cwd
-                ))
-            })?);
+            .map(|cwd| PathUri::from_abs_path(&cwd))
+            .unwrap_or_else(|| selected_environment.cwd.clone());
         let shell = metadata.and_then(|metadata| metadata.shell).map(|shell| {
             crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
         });
@@ -796,7 +796,10 @@ fn resolve_environment_selections(
             shell,
         ));
     }
-    Ok(TurnEnvironmentSnapshot { turn_environments })
+    Ok(TurnEnvironmentSnapshot {
+        turn_environments,
+        starting: Vec::new(),
+    })
 }
 
 #[cfg(test)]

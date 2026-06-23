@@ -121,7 +121,7 @@ fn build_env_status_output(session: &Session, turn: &TurnContext) -> EnvStatusOu
             (
                 environment.environment_id.clone(),
                 TurnEnvironmentStatus {
-                    cwd: environment.cwd().to_string_lossy().into_owned(),
+                    cwd: environment.cwd().inferred_native_path_string(),
                     shell: environment
                         .shell
                         .as_ref()
