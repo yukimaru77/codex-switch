@@ -321,7 +321,10 @@ impl EnvironmentManager {
             local_runtime_paths,
             http_client_factory,
             env_metadata: Mutex::new(HashMap::new()),
+            thread_env_metadata: Mutex::new(HashMap::new()),
             last_launcher: Mutex::new(HashMap::new()),
+            last_environment_id: Mutex::new(HashMap::new()),
+            thread_environment_ids: Mutex::new(HashMap::new()),
         };
         let identity = noise_channel_identity()?;
         let environment = Arc::new(Environment::remote_with_transport(
@@ -1882,10 +1885,18 @@ mod tests {
     async fn environment_manager_snapshots_default_first_and_include_metadata() {
         let manager = EnvironmentManager::default_for_tests();
         manager
-            .upsert_environment("remote-b".to_string(), "ws://127.0.0.1:8765".to_string())
+            .upsert_environment(
+                "remote-b".to_string(),
+                "ws://127.0.0.1:8765".to_string(),
+                None,
+            )
             .expect("remote-b environment");
         manager
-            .upsert_environment("remote-a".to_string(), "ws://127.0.0.1:9876".to_string())
+            .upsert_environment(
+                "remote-a".to_string(),
+                "ws://127.0.0.1:9876".to_string(),
+                None,
+            )
             .expect("remote-a environment");
         manager.set_environment_metadata(
             "remote-a".to_string(),
