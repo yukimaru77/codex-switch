@@ -187,6 +187,61 @@ fn output_prefers_env_switch_metadata_for_current_default_even_when_turn_has_ent
     assert_eq!(entry.shell.as_deref(), Some("/bin/sh"));
 }
 
+#[test]
+fn output_prefers_env_switch_metadata_for_non_default_environment() {
+    let snapshots = vec![
+        EnvironmentSnapshot {
+            environment_id: "local".to_string(),
+            is_remote: false,
+            is_default: true,
+            metadata: None,
+        },
+        EnvironmentSnapshot {
+            environment_id: "ssh:hostname".to_string(),
+            is_remote: true,
+            is_default: false,
+            metadata: Some(EnvironmentMetadata {
+                cwd: "/new".to_string(),
+                shell: Some("/bin/sh".to_string()),
+            }),
+        },
+    ];
+    let turn_environments = BTreeMap::from([
+        (
+            "local".to_string(),
+            TurnEnvironmentStatus {
+                cwd: "/home/project".to_string(),
+                shell: Some("/bin/zsh".to_string()),
+                selected_for_turn: true,
+            },
+        ),
+        (
+            "ssh:hostname".to_string(),
+            TurnEnvironmentStatus {
+                cwd: "/old".to_string(),
+                shell: Some("/bin/bash".to_string()),
+                selected_for_turn: true,
+            },
+        ),
+    ]);
+
+    let output = build_env_status_output_from_parts(
+        snapshots,
+        &turn_environments,
+        Some("local".to_string()),
+        Some("local".to_string()),
+    );
+
+    let entry = output
+        .environments
+        .iter()
+        .find(|environment| environment.environment_id == "ssh:hostname")
+        .expect("remote environment entry");
+    assert_eq!(entry.cwd.as_deref(), Some("/new"));
+    assert_eq!(entry.cwd_source, "env_switch_metadata");
+    assert_eq!(entry.shell.as_deref(), Some("/bin/sh"));
+}
+
 #[tokio::test]
 async fn status_lists_only_turn_and_thread_visible_environments() {
     let (session, turn) = crate::session::tests::make_session_and_context().await;
