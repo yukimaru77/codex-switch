@@ -193,7 +193,11 @@ async fn status_lists_only_turn_and_thread_visible_environments() {
     let manager = &session.services.environment_manager;
     let thread_key = session.thread_id.to_string();
     manager
-        .upsert_environment("ssh:mine".to_string(), "ws://127.0.0.1:8765".to_string())
+        .upsert_environment(
+            "ssh:mine".to_string(),
+            "ws://127.0.0.1:8765".to_string(),
+            None,
+        )
         .expect("current thread environment");
     manager.set_environment_metadata(
         "ssh:mine".to_string(),
@@ -205,7 +209,11 @@ async fn status_lists_only_turn_and_thread_visible_environments() {
     manager.record_thread_environment_id(thread_key.clone(), "ssh:mine".to_string());
     manager.set_last_environment_id(thread_key, "ssh:mine".to_string());
     manager
-        .upsert_environment("ssh:other".to_string(), "ws://127.0.0.1:9876".to_string())
+        .upsert_environment(
+            "ssh:other".to_string(),
+            "ws://127.0.0.1:9876".to_string(),
+            None,
+        )
         .expect("other thread environment");
     manager.set_environment_metadata(
         "ssh:other".to_string(),
@@ -242,7 +250,11 @@ async fn status_uses_thread_specific_metadata_when_available() {
     let manager = &session.services.environment_manager;
     let thread_key = session.thread_id.to_string();
     manager
-        .upsert_environment("ssh:shared".to_string(), "ws://127.0.0.1:8765".to_string())
+        .upsert_environment(
+            "ssh:shared".to_string(),
+            "ws://127.0.0.1:8765".to_string(),
+            None,
+        )
         .expect("thread environment");
     manager.set_environment_metadata(
         "ssh:shared".to_string(),
@@ -308,7 +320,11 @@ async fn status_inherits_parent_thread_environment_cursor() {
     turn.parent_thread_id = Some(parent_thread_id);
     let manager = &session.services.environment_manager;
     manager
-        .upsert_environment("ssh:parent".to_string(), "ws://127.0.0.1:8765".to_string())
+        .upsert_environment(
+            "ssh:parent".to_string(),
+            "ws://127.0.0.1:8765".to_string(),
+            None,
+        )
         .expect("parent thread environment");
     manager.set_environment_metadata(
         "ssh:parent".to_string(),

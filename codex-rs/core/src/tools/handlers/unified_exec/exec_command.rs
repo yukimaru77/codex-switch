@@ -378,7 +378,7 @@ impl ExecCommandHandler {
                 response.advisory = remote_command_advisory(
                     &hook_command,
                     RemoteCommandAdvisoryOptions {
-                        env_switch_enabled: turn.features.enabled(Feature::EnvSwitch),
+                        env_switch_enabled: turn.config.features.get().enabled(Feature::EnvSwitch),
                     },
                 )
                 .map(str::to_string);
