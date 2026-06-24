@@ -2542,7 +2542,7 @@ dependencies = [
  "codex-utils-absolute-path",
  "codex-utils-path",
  "codex-utils-path-uri",
- "core-foundation 0.9.4",
+ "core-foundation 0.10.1",
  "dns-lookup",
  "dunce",
  "futures",
@@ -4322,7 +4322,7 @@ dependencies = [
 name = "codex-utils-sleep-inhibitor"
 version = "0.141.0"
 dependencies = [
- "core-foundation 0.9.4",
+ "core-foundation 0.10.1",
  "libc",
  "tracing",
  "windows-sys 0.61.2",
