@@ -55,6 +55,7 @@ members = [
     "ext/goal",
     "ext/git-attribution",
     "ext/guardian",
+    "ext/monitor",
     "ext/image-generation",
     "ext/items",
     "ext/memories",
@@ -189,6 +190,7 @@ codex-extension-items = { path = "ext/items" }
 codex-goal-extension = { path = "ext/goal" }
 codex-git-attribution = { path = "ext/git-attribution" }
 codex-guardian = { path = "ext/guardian" }
+codex-monitor-extension = { path = "ext/monitor" }
 codex-image-generation-extension = { path = "ext/image-generation" }
 codex-external-agent-migration = { path = "external-agent-migration" }
 codex-experimental-api-macros = { path = "codex-experimental-api-macros" }

@@ -228,6 +228,9 @@ impl ChatWidget {
             | ServerNotification::WindowsWorldWritableWarning(_)
             | ServerNotification::WindowsSandboxSetupCompleted(_)
             | ServerNotification::AccountLoginCompleted(_) => {}
+            ServerNotification::MonitorNotification(notification) => {
+                self.on_monitor_notification(notification);
+            }
             ServerNotification::ContextCompacted(_) => {}
         }
     }
