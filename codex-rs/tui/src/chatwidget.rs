@@ -371,6 +371,7 @@ mod hook_lifecycle;
 mod hooks;
 mod interaction;
 mod skills;
+mod monitor_commands;
 mod slash_dispatch;
 use self::skills::collect_tool_mentions;
 use self::skills::find_app_mentions;
@@ -793,6 +794,7 @@ pub(crate) struct ChatWidget {
     external_editor_state: ExternalEditorState,
     last_rendered_user_message_display: Option<UserMessageDisplay>,
     last_non_retry_error: Option<(String, String)>,
+    monitor_manager: crate::monitor::MonitorManager,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

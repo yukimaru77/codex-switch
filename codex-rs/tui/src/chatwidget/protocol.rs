@@ -232,6 +232,9 @@ impl ChatWidget {
             | ServerNotification::WindowsWorldWritableWarning(_)
             | ServerNotification::WindowsSandboxSetupCompleted(_)
             | ServerNotification::AccountLoginCompleted(_) => {}
+            ServerNotification::MonitorNotification(notification) => {
+                self.on_monitor_notification(notification);
+            }
             ServerNotification::ContextCompacted(_) => {}
         }
         self.thread_usage.replaying_turn_completion = was_replaying_turn_completion;
