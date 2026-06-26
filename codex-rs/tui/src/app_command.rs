@@ -97,6 +97,9 @@ pub(crate) enum AppCommand {
     ApproveGuardianDeniedAction {
         event: GuardianAssessmentEvent,
     },
+    MonitorEvent {
+        event: codex_protocol::protocol::MonitorEvent,
+    },
 }
 
 impl AppCommand {
