@@ -1326,6 +1326,28 @@ impl AppServerSession {
         Ok(())
     }
 
+    pub(crate) async fn thread_submit_monitor_event(
+        &mut self,
+        thread_id: ThreadId,
+        event: &codex_protocol::protocol::MonitorEvent,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        let event_value = serde_json::to_value(event)
+            .wrap_err("failed to serialize MonitorEvent")?;
+        let _: codex_app_server_protocol::ThreadMonitorEventResponse = self
+            .client
+            .request_typed(codex_app_server_protocol::ClientRequest::ThreadMonitorEvent {
+                request_id,
+                params: codex_app_server_protocol::ThreadMonitorEventParams {
+                    thread_id: thread_id.to_string(),
+                    event: event_value,
+                },
+            })
+            .await
+            .wrap_err("thread/monitorEvent failed in TUI")?;
+        Ok(())
+    }
+
     pub(crate) async fn thread_background_terminals_clean(
         &mut self,
         thread_id: ThreadId,
