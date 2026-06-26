@@ -242,6 +242,7 @@ impl ChatWidget {
             external_editor_state: ExternalEditorState::Closed,
             last_rendered_user_message_display: None,
             last_non_retry_error: None,
+            monitor_manager: crate::monitor::MonitorManager::new(),
         };
 
         widget.prefetch_rate_limits();

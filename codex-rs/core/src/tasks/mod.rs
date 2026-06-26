@@ -801,6 +801,12 @@ impl Session {
         if let Err(err) = self.flush_rollout().await {
             warn!("failed to flush rollout after emitting terminal turn event: {err}");
         }
+        // P0-3: After clearing the active turn, check for pending monitor/mailbox
+        // events that arrived during the turn close boundary. The idle lifecycle
+        // check already does this via has_trigger_turn_mailbox_items(), and
+        // maybe_start_turn_for_pending_work is called by the monitor_event handler
+        // when events arrive. So emit_thread_idle handles the post-turn wake path.
+        self.emit_thread_idle_lifecycle_if_idle().await;
     }
 
     async fn take_active_turn(&self) -> Option<ActiveTurn> {
