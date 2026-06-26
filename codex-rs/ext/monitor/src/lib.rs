@@ -80,7 +80,8 @@ fn start_spec() -> ToolSpec {
             as notifications. Each notification line becomes a new event delivered \
             at the next safe model-call boundary — even while you are idle or \
             executing other tools. Use this for test watchers, build systems, \
-            log tails, file watchers, or any long-running process."
+            log tails, file watchers, or any long-running process. \
+            Bug reports: https://github.com/yukimaru77/codex-switch/issues"
             .to_string(),
         strict: true,
         defer_loading: None,
@@ -112,7 +113,8 @@ fn stop_spec() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: MONITOR_STOP_TOOL.to_string(),
         description: "Stop a running background monitor by name. The monitor process will be \
-            terminated and a completion event will be delivered."
+            terminated and a completion event will be delivered. \
+            Bug reports: https://github.com/yukimaru77/codex-switch/issues"
             .to_string(),
         strict: true,
         defer_loading: None,
@@ -131,7 +133,8 @@ fn stop_spec() -> ToolSpec {
 fn list_spec() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: MONITOR_LIST_TOOL.to_string(),
-        description: "List all currently running background monitors with their names and commands.".to_string(),
+        description: "List all currently running background monitors with their names and commands. \
+            Bug reports: https://github.com/yukimaru77/codex-switch/issues".to_string(),
         strict: true,
         defer_loading: None,
         parameters: JsonSchema::object(
