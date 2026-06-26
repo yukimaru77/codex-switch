@@ -676,6 +676,11 @@ pub enum Op {
         /// The raw command string after '!'
         command: String,
     },
+
+    /// A monitor event from a background process.
+    MonitorEvent {
+        event: MonitorEvent,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, JsonSchema)]
@@ -854,6 +859,94 @@ impl InterAgentCommunication {
     }
 }
 
+/// Describes when a monitor event should wake an idle session.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum MonitorWakePolicy {
+    /// Attach to the active turn if one is running; otherwise start a new turn.
+    AttachOrWake,
+    /// Attach only if a turn is active; stay queued otherwise.
+    AttachOnly,
+}
+
+/// The kind of event a monitor produced.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum MonitorEventKind {
+    /// One or more stdout lines batched together.
+    OutputBatch,
+    /// The monitored process exited successfully.
+    Completed { exit_code: i32 },
+    /// The monitored process exited with a non-zero status.
+    Failed { exit_code: i32, stderr_tail: Option<String> },
+    /// The monitored process was killed due to timeout.
+    TimedOut,
+    /// The monitored process was stopped by the user.
+    Cancelled,
+}
+
+/// An event produced by a background monitor process.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct MonitorEvent {
+    /// Unique identifier for this event.
+    pub id: String,
+    /// Name of the monitor that produced this event.
+    pub monitor_name: String,
+    /// Monotonically increasing sequence number within this monitor.
+    pub sequence: u64,
+    /// What kind of event this is.
+    pub kind: MonitorEventKind,
+    /// Human-readable summary for the model.
+    pub summary: String,
+    /// Whether this event can wake an idle session.
+    pub wake_policy: MonitorWakePolicy,
+}
+
+impl MonitorEvent {
+    /// Convert this event into a model-visible ResponseItem.
+    ///
+    /// P0-4: Uses JSON-encoded structured data instead of raw XML wrapper.
+    /// The summary is escaped to prevent prompt injection via monitor output.
+    pub fn to_model_input_item(&self) -> ResponseItem {
+        let kind_label = match &self.kind {
+            MonitorEventKind::OutputBatch => "output",
+            MonitorEventKind::Completed { .. } => "completed",
+            MonitorEventKind::Failed { .. } => "failed",
+            MonitorEventKind::TimedOut => "timed_out",
+            MonitorEventKind::Cancelled => "cancelled",
+        };
+        let text = format!(
+            "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\
+             This is an automated background-task event.\n\
+             monitor: {}\n\
+             event: {}\n\
+             output: {}",
+            self.monitor_name, kind_label, self.summary,
+        );
+        ResponseItem::AgentMessage {
+            id: None,
+            author: format!("monitor:{}", self.monitor_name),
+            recipient: "codex".to_string(),
+            content: vec![AgentMessageInputContent::InputText { text }],
+            internal_chat_message_metadata_passthrough: None,
+        }
+    }
+
+    pub fn should_trigger_turn(&self) -> bool {
+        matches!(self.wake_policy, MonitorWakePolicy::AttachOrWake)
+    }
+}
+
+/// TUI-facing notification for a background monitor event.
+/// This is emitted independently of model turns so the UI can display
+/// monitor output in real time, even while foreground tools are executing.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct MonitorNotificationEvent {
+    pub monitor_name: String,
+    pub summary: String,
+    pub kind: String,
+}
+
 impl Op {
     pub fn kind(&self) -> &'static str {
         match self {
@@ -883,6 +976,7 @@ impl Op {
             Self::ApproveGuardianDeniedAction { .. } => "approve_guardian_denied_action",
             Self::Shutdown => "shutdown",
             Self::RunUserShellCommand { .. } => "run_user_shell_command",
+            Self::MonitorEvent { .. } => "monitor_event",
         }
     }
 }
@@ -1379,6 +1473,11 @@ pub enum EventMsg {
     ImageGenerationBegin(ImageGenerationBeginEvent),
 
     ImageGenerationEnd(ImageGenerationEndEvent),
+
+    /// Background monitor event notification for TUI display.
+    /// Delivered independently of model turns so the UI can show monitor
+    /// output in real time while tools are executing.
+    MonitorNotification(MonitorNotificationEvent),
 
     /// Notification that the server is about to execute a command.
     ExecCommandBegin(ExecCommandBeginEvent),
