@@ -572,6 +572,13 @@ impl ChatWidget {
                     },
                 );
             }
+            SlashCommand::Monitor => {
+                self.add_info_message(
+                    "Usage: /monitor start <name> <command> | /monitor stop <name> | /monitor status"
+                        .to_string(),
+                    None,
+                );
+            }
         }
     }
 
@@ -983,6 +990,9 @@ impl ChatWidget {
             SlashCommand::Pets if !trimmed.is_empty() => {
                 self.select_pet_by_id(args);
             }
+            SlashCommand::Monitor if !trimmed.is_empty() => {
+                self.handle_monitor_command(trimmed);
+            }
             _ => self.dispatch_command(cmd),
         }
         if source == SlashCommandDispatchSource::Live && cmd != SlashCommand::Goal {
@@ -1154,6 +1164,7 @@ impl ChatWidget {
             | SlashCommand::Rename
             | SlashCommand::Recap
             | SlashCommand::TestApproval => QueueDrain::Continue,
+            SlashCommand::Monitor => QueueDrain::Continue,
             SlashCommand::Cd => match self.thread_id {
                 Some(thread_id) if self.can_change_working_directory(thread_id) => QueueDrain::Stop,
                 _ => QueueDrain::Continue,

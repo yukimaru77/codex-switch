@@ -126,7 +126,8 @@ pub fn should_persist_event_msg(ev: &EventMsg, history_mode: ThreadHistoryMode) 
         | EventMsg::ContextCompacted(_)
         | EventMsg::McpToolCallEnd(_)
         | EventMsg::WebSearchEnd(_)
-        | EventMsg::ImageGenerationEnd(_) => {
+        | EventMsg::ImageGenerationEnd(_)
+        | EventMsg::MonitorNotification(_) => {
             matches!(history_mode, ThreadHistoryMode::Legacy)
         }
         EventMsg::SubAgentActivity(event) => {
