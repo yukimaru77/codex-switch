@@ -3,6 +3,7 @@ use crate::state::MailboxDeliveryPhase;
 use crate::state::TurnState;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::InterAgentCommunication;
+use codex_protocol::protocol::MonitorEvent;
 use codex_protocol::user_input::UserInput;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ pub enum TurnInput {
     },
     ResponseItem(ResponseItem),
     InterAgentCommunication(InterAgentCommunication),
+    MonitorEvent(MonitorEvent),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,6 +38,7 @@ pub(crate) struct TurnInputQueue {
 pub(crate) struct InputQueue {
     activity_tx: watch::Sender<InputQueueActivity>,
     mailbox_pending_mails: Mutex<VecDeque<PendingMailboxCommunication>>,
+    monitor_pending_events: Mutex<VecDeque<MonitorEvent>>,
 }
 
 struct PendingMailboxCommunication {
@@ -49,6 +52,7 @@ impl InputQueue {
         Self {
             activity_tx,
             mailbox_pending_mails: Mutex::new(VecDeque::new()),
+            monitor_pending_events: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -92,6 +96,7 @@ impl InputQueue {
 
     pub(crate) async fn has_pending_mailbox_items(&self) -> bool {
         !self.mailbox_pending_mails.lock().await.is_empty()
+            || !self.monitor_pending_events.lock().await.is_empty()
     }
 
     pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
@@ -100,6 +105,7 @@ impl InputQueue {
             .await
             .iter()
             .any(|mail| mail.communication.trigger_turn)
+            || self.has_trigger_turn_monitor_events().await
     }
 
     pub(crate) async fn drain_mailbox_input_items(&self) -> (Vec<TurnInput>, Option<String>) {
@@ -115,11 +121,43 @@ impl InputQueue {
             .map(|mail| mail.parent_turn_id.as_deref())
             .reduce(|expected, candidate| expected.filter(|id| candidate == Some(*id)))
             .and_then(|id| id.filter(|id| !id.trim().is_empty()).map(str::to_string));
-        let items = pending_mails
+        let mut items = pending_mails
             .into_iter()
             .map(|mail| TurnInput::InterAgentCommunication(mail.communication))
-            .collect();
+            .collect::<Vec<_>>();
+        items.extend(
+            self.monitor_pending_events
+                .lock()
+                .await
+                .drain(..)
+                .map(TurnInput::MonitorEvent),
+        );
         (items, parent_turn_id)
+    }
+
+    /// Drain only monitor events, ignoring MailboxDeliveryPhase.
+    /// Monitor events bypass the defer-to-next-turn logic so they
+    /// are always visible to the model alongside tool results.
+    pub(crate) async fn drain_monitor_events_only(&self) -> Vec<TurnInput> {
+        self.monitor_pending_events
+            .lock()
+            .await
+            .drain(..)
+            .map(TurnInput::MonitorEvent)
+            .collect()
+    }
+
+    pub(crate) async fn enqueue_monitor_event(&self, event: MonitorEvent) {
+        self.monitor_pending_events.lock().await.push_back(event);
+        self.activity_tx.send_replace(InputQueueActivity::Mailbox);
+    }
+
+    pub(crate) async fn has_trigger_turn_monitor_events(&self) -> bool {
+        self.monitor_pending_events
+            .lock()
+            .await
+            .iter()
+            .any(|e| e.should_trigger_turn())
     }
 
     pub(crate) async fn turn_state_for_sub_id(
@@ -244,6 +282,15 @@ impl InputQueue {
             }
         };
         if !accepts_mailbox_delivery {
+            // Even when mailbox delivery is deferred (e.g. after assistant
+            // final-answer text), monitor events are always delivered so the
+            // model sees them alongside tool results in the same turn.
+            let monitor_items = self.drain_monitor_events_only().await;
+            if monitor_items.is_empty() {
+                return (pending_input, None);
+            }
+            let mut pending_input = pending_input;
+            pending_input.extend(monitor_items);
             return (pending_input, None);
         }
         let (mailbox_items, parent_turn_id) = self.drain_mailbox_input_items().await;
@@ -274,11 +321,16 @@ impl InputQueue {
                 None => (false, true),
             }
         };
-        if !accepts_mailbox_delivery {
-            return false;
-        }
         if has_turn_pending_input {
             return true;
+        }
+        // Monitor events always count as pending, even when mailbox
+        // delivery is deferred to the next turn.
+        if !self.monitor_pending_events.lock().await.is_empty() {
+            return true;
+        }
+        if !accepts_mailbox_delivery {
+            return false;
         }
         self.has_pending_mailbox_items().await
     }
@@ -479,5 +531,86 @@ mod tests {
             .enqueue_mailbox_communication(trigger_mail, /*parent_turn_id*/ None)
             .await;
         assert!(input_queue.has_trigger_turn_mailbox_items().await);
+    }
+
+    fn make_monitor_event(name: &str, summary: &str, wake: bool) -> MonitorEvent {
+        MonitorEvent {
+            id: format!("test-{}", name),
+            monitor_name: name.to_string(),
+            sequence: 0,
+            kind: codex_protocol::protocol::MonitorEventKind::OutputBatch,
+            summary: summary.to_string(),
+            wake_policy: if wake {
+                codex_protocol::protocol::MonitorWakePolicy::AttachOrWake
+            } else {
+                codex_protocol::protocol::MonitorWakePolicy::AttachOnly
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn monitor_event_enqueue_makes_mailbox_pending() {
+        let input_queue = InputQueue::new();
+        assert!(!input_queue.has_pending_mailbox_items().await);
+
+        input_queue
+            .enqueue_monitor_event(make_monitor_event("test", "hello", false))
+            .await;
+        assert!(input_queue.has_pending_mailbox_items().await);
+    }
+
+    #[tokio::test]
+    async fn monitor_event_attach_or_wake_triggers_turn() {
+        let input_queue = InputQueue::new();
+        assert!(!input_queue.has_trigger_turn_mailbox_items().await);
+
+        input_queue
+            .enqueue_monitor_event(make_monitor_event("test", "wake up", true))
+            .await;
+        assert!(input_queue.has_trigger_turn_mailbox_items().await);
+    }
+
+    #[tokio::test]
+    async fn monitor_event_attach_only_does_not_trigger_turn() {
+        let input_queue = InputQueue::new();
+
+        input_queue
+            .enqueue_monitor_event(make_monitor_event("test", "quiet", false))
+            .await;
+        assert!(!input_queue.has_trigger_turn_mailbox_items().await);
+        assert!(input_queue.has_pending_mailbox_items().await);
+    }
+
+    #[tokio::test]
+    async fn monitor_events_drain_with_mailbox() {
+        let input_queue = InputQueue::new();
+
+        let mail = make_mail(
+            AgentPath::root(),
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            "mail",
+            false,
+        );
+        input_queue.enqueue_mailbox_communication(mail).await;
+        input_queue
+            .enqueue_monitor_event(make_monitor_event("test", "event", false))
+            .await;
+
+        let items = input_queue.drain_mailbox_input_items().await;
+        assert_eq!(items.len(), 2);
+        assert!(matches!(&items[0], TurnInput::InterAgentCommunication(_)));
+        assert!(matches!(&items[1], TurnInput::MonitorEvent(_)));
+
+        assert!(!input_queue.has_pending_mailbox_items().await);
+    }
+
+    #[tokio::test]
+    async fn monitor_event_converts_to_model_item() {
+        let event = make_monitor_event("test-watcher", "3 tests failed", true);
+        let item = event.to_model_input_item();
+        let json = serde_json::to_string(&item).expect("serialize");
+        assert!(json.contains("monitor:test-watcher"));
+        assert!(json.contains("3 tests failed"));
+        assert!(json.contains("SYSTEM NOTIFICATION"));
     }
 }

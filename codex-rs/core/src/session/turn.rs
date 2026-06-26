@@ -944,7 +944,9 @@ async fn track_turn_resolved_config_analytics(
                 .iter()
                 .filter_map(|item| match item {
                     TurnInput::UserInput { content, .. } => Some(content.as_slice()),
-                    TurnInput::ResponseItem(_) | TurnInput::InterAgentCommunication(_) => None,
+                    TurnInput::ResponseItem(_)
+                    | TurnInput::InterAgentCommunication(_)
+                    | TurnInput::MonitorEvent(_) => None,
                 })
                 .flatten()
                 .filter(|item| {
@@ -1802,7 +1804,8 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<(String, Option<
         | EventMsg::CollabCloseEnd(_)
         | EventMsg::CollabResumeBegin(_)
         | EventMsg::CollabResumeEnd(_)
-        | EventMsg::SubAgentActivity(_) => None,
+        | EventMsg::SubAgentActivity(_)
+        | EventMsg::MonitorNotification(_) => None,
     }
 }
 

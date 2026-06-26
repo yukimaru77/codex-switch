@@ -326,6 +326,41 @@ pub async fn inter_agent_communication(
     }
 }
 
+pub async fn monitor_event(
+    sess: &Arc<Session>,
+    sub_id: String,
+    event: codex_protocol::protocol::MonitorEvent,
+) {
+    // Emit TUI notification immediately so the UI shows monitor output
+    // in real time, even while foreground tools are executing.
+    let kind_label = match &event.kind {
+        codex_protocol::protocol::MonitorEventKind::OutputBatch => "output",
+        codex_protocol::protocol::MonitorEventKind::Completed { .. } => "completed",
+        codex_protocol::protocol::MonitorEventKind::Failed { .. } => "failed",
+        codex_protocol::protocol::MonitorEventKind::TimedOut => "timed_out",
+        codex_protocol::protocol::MonitorEventKind::Cancelled => "cancelled",
+    };
+    let notification = codex_protocol::protocol::EventMsg::MonitorNotification(
+        codex_protocol::protocol::MonitorNotificationEvent {
+            monitor_name: event.monitor_name.clone(),
+            summary: event.summary.clone(),
+            kind: kind_label.to_string(),
+        },
+    );
+    sess.send_event_raw(codex_protocol::protocol::Event {
+        id: event.id.clone(),
+        msg: notification,
+    })
+    .await;
+
+    let trigger_turn = event.should_trigger_turn();
+    sess.input_queue.enqueue_monitor_event(event).await;
+    if trigger_turn {
+        sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
+            .await;
+    }
+}
+
 pub async fn run_user_shell_command(sess: &Arc<Session>, sub_id: String, command: String) {
     if let Some((turn_context, cancellation_token)) =
         sess.active_turn_context_and_cancellation_token().await
@@ -872,6 +907,10 @@ pub(super) async fn submission_loop(
                 }
                 Op::ApproveGuardianDeniedAction { event } => {
                     approve_guardian_denied_action(&sess, event).await;
+                    false
+                }
+                Op::MonitorEvent { event } => {
+                    monitor_event(&sess, sub.id.clone(), event).await;
                     false
                 }
                 _ => false, // Ignore unknown ops; enum is non_exhaustive to allow extensions.

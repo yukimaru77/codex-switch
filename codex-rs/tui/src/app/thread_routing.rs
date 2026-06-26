@@ -821,6 +821,12 @@ impl App {
                     .await?;
                 Ok(true)
             }
+            AppCommand::MonitorEvent { event } => {
+                app_server
+                    .thread_submit_monitor_event(thread_id, event)
+                    .await?;
+                Ok(true)
+            }
             _ => Ok(false),
         }
     }
