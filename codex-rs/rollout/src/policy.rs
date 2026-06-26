@@ -97,7 +97,8 @@ pub fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::TurnComplete(_)
         | EventMsg::WebSearchEnd(_)
         | EventMsg::ImageGenerationEnd(_)
-        | EventMsg::SubAgentActivity(_) => true,
+        | EventMsg::SubAgentActivity(_)
+        | EventMsg::MonitorNotification(_) => true,
         EventMsg::ItemCompleted(event) => {
             // These items have no equivalent raw ResponseItem or legacy event,
             // so persist their completion for replay without retaining every
