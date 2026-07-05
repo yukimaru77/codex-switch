@@ -264,7 +264,8 @@ pub enum Feature {
     WorkspaceDependencies,
     /// Enable the `env_switch` tool to migrate the execution environment into
     /// a Docker container or SSH host without restarting the session.
-    /// Defaults to OFF; must be explicitly enabled with `features.env_switch = true`.
+    /// Enabled by default in this fork; set `features.env_switch = false` to
+    /// opt out.
     EnvSwitch,
 
     // Removed
@@ -1456,8 +1457,8 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::EnvSwitch,
         key: "env_switch",
-        stage: Stage::UnderDevelopment,
-        default_enabled: false,
+        stage: Stage::Stable,
+        default_enabled: true,
     },
 ];
 
