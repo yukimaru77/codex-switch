@@ -216,7 +216,7 @@ impl InputQueue {
             .lock()
             .await
             .iter()
-            .any(|e| e.should_trigger_turn())
+            .any(MonitorEvent::should_trigger_turn)
     }
 
     pub(crate) async fn turn_state_for_sub_id(
