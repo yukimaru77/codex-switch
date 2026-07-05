@@ -212,12 +212,14 @@ impl ExecCommandHandler {
         // e.g. `/bin/sh` in a container that has no zsh) over the host login
         // shell, so a remote command is not wrapped in a shell that does not
         // exist there. An explicit `shell` argument from the model still wins
-        // inside `get_command`.
-        let shell = turn_environment
-            .shell
-            .clone()
-            .map(Arc::new)
-            .unwrap_or_else(|| session.user_shell());
+        // inside `get_command`. A remote environment with no recorded shell
+        // must not inherit the host login shell either — its path (e.g.
+        // `/opt/homebrew/bin/bash`) usually does not exist on the remote.
+        let shell = match turn_environment.shell.clone() {
+            Some(shell) => Arc::new(shell),
+            None if environment.is_remote() => Arc::new(crate::shell::fallback_remote_shell()),
+            None => session.user_shell(),
+        };
         // TODO(anp): Resolve requested shells in remote environments instead of restricting
         // commands to the reported default shell.
         if environment.is_remote()
@@ -414,9 +416,17 @@ impl ExecCommandHandler {
                     advisory: None,
                 }))
             }
-            Err(err) => Err(FunctionCallError::RespondToModel(format!(
-                "exec_command failed for `{command_for_display}`: {err:?}"
-            ))),
+            Err(err) => {
+                let mut message =
+                    format!("exec_command failed for `{command_for_display}`: {err:?}");
+                if environment.is_remote() && message.contains("transport disconnected") {
+                    message.push_str(&format!(
+                        " — environment `{}` lost its exec-server connection; retry once, and if it still fails run env_switch again for this target to re-provision it",
+                        turn_environment.environment_id
+                    ));
+                }
+                Err(FunctionCallError::RespondToModel(message))
+            }
         }
     }
 }

@@ -69,7 +69,7 @@ pub enum EnvironmentConnectionState {
 /// the map can grow without bound inside a very long session.  Capping at 64
 /// makes runaway growth immediately visible rather than silently leaking
 /// memory.  A follow-up issue should implement proper env_drop / teardown.
-const MAX_ENV_METADATA_ENTRIES: usize = 64;
+const MAX_ENV_METADATA_ENTRIES: usize = 256;
 
 /// Metadata associated with a dynamically-registered remote environment.
 ///

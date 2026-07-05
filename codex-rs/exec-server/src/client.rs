@@ -536,11 +536,18 @@ impl LazyRemoteExecServerClient {
     }
 
     fn can_reconnect(&self) -> bool {
+        // All transports retain enough in `transport_params` to open a fresh
+        // connection. For stdio this respawns the launcher command (e.g. the
+        // `ssh … docker exec … exec-server` chain registered by env_switch),
+        // which is the only way to recover once the child process dies —
+        // sessions on the old process are lost either way, but new commands
+        // must not fail forever with "transport disconnected".
         matches!(
             self.transport_params,
             ExecServerTransportParams::Deferred(_)
                 | ExecServerTransportParams::WebSocketUrl { .. }
                 | ExecServerTransportParams::NoiseRendezvous { .. }
+                | ExecServerTransportParams::StdioCommand { .. }
         )
     }
 
@@ -2628,6 +2635,41 @@ mod tests {
         drop(second);
         drop(client);
         server.await.expect("server task should finish");
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn stdio_client_respawns_after_child_exit() {
+        // The child answers initialize with a PID-derived session id and then
+        // exits, so a successful respawn is observable as a new session id.
+        let client = LazyRemoteExecServerClient::new(ExecServerTransportParams::StdioCommand {
+            command: StdioExecServerCommand {
+                program: "sh".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    "read _line; printf '{\"id\":1,\"result\":{\"sessionId\":\"sid-'\"$$\"'\"}}\\n'; read _line"
+                        .to_string(),
+                ],
+                env: HashMap::new(),
+                cwd: None,
+            },
+            initialize_timeout: Duration::from_secs(5),
+        });
+
+        let first = client.get().await.expect("first stdio connect");
+        let first_session = first.session_id().expect("first session id");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !first.is_disconnected() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("child exit should disconnect the first client");
+
+        let second = client.get().await.expect("stdio client should respawn");
+        let second_session = second.session_id().expect("second session id");
+
+        assert_ne!(first_session, second_session);
     }
 
     #[tokio::test]
