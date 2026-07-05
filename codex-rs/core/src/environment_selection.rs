@@ -170,9 +170,7 @@ impl ThreadEnvironments {
                 .environment_manager
                 .get_environment_metadata(environment_id)
                 .and_then(|metadata| metadata.shell)
-                .map(|shell| {
-                    crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
-                });
+                .map(|shell| crate::shell::shell_for_remote_path(std::path::Path::new(&shell)));
             let (resolution_task, resolution) = Self::resolve_environment(
                 selected_environment.clone(),
                 Arc::clone(&environment),
@@ -507,9 +505,9 @@ fn resolve_environment_selections(
             .map_err(|err| CodexErr::InvalidRequest(err.to_string()))?
             .map(|cwd| PathUri::from_abs_path(&cwd))
             .unwrap_or_else(|| selected_environment.cwd.clone());
-        let shell = metadata.and_then(|metadata| metadata.shell).map(|shell| {
-            crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
-        });
+        let shell = metadata
+            .and_then(|metadata| metadata.shell)
+            .map(|shell| crate::shell::shell_for_remote_path(std::path::Path::new(&shell)));
         turn_environments.push(TurnEnvironment::new(
             environment_id,
             environment,
