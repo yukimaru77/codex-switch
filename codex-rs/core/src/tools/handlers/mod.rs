@@ -219,6 +219,25 @@ fn last_env_switch_environment_id(session: &Session, turn: &TurnContext) -> Opti
         })
 }
 
+/// Looks up env_switch cwd/shell metadata for `environment_id`, preferring the
+/// thread-scoped entry and falling back to the global entry.
+///
+/// The global fallback matters because both maps are size-capped: a burst of
+/// registrations (e.g. many sub-agent threads) can evict the thread-scoped
+/// entry while the global one survives, and falling back keeps resolution on
+/// remote metadata instead of degrading to local turn values.
+fn env_switch_metadata(
+    session: &Session,
+    turn: &TurnContext,
+    environment_id: &str,
+) -> Option<codex_exec_server::EnvironmentMetadata> {
+    let thread_keys = environment_thread_keys(session, turn);
+    let manager = &session.services.environment_manager;
+    manager
+        .get_thread_environment_metadata_for_keys(&thread_keys, environment_id)
+        .or_else(|| manager.get_environment_metadata(environment_id))
+}
+
 fn turn_environment_from_env_switch_metadata(
     session: &Session,
     turn: &TurnContext,
@@ -233,15 +252,10 @@ fn turn_environment_from_env_switch_metadata(
             "unknown turn environment id `{environment_id}`"
         )));
     };
-    let thread_keys = environment_thread_keys(session, turn);
-    // Retrieve cwd/shell from the shared EnvironmentManager metadata map.
+    // Retrieve cwd/shell from the shared EnvironmentManager metadata maps.
     // Metadata is populated by env_switch *before* the environment is
     // registered, so it is available as soon as get_environment() succeeds.
-    let Some(meta) = session
-        .services
-        .environment_manager
-        .get_thread_environment_metadata_for_keys(&thread_keys, environment_id)
-    else {
+    let Some(meta) = env_switch_metadata(session, turn, environment_id) else {
         return Err(FunctionCallError::RespondToModel(format!(
             "environment `{environment_id}` is registered but missing cwd metadata; rerun env_switch for this target"
         )));
@@ -252,9 +266,9 @@ fn turn_environment_from_env_switch_metadata(
             meta.cwd
         ))
     })?;
-    let shell = meta.shell.map(|shell| {
-        crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
-    });
+    let shell = meta
+        .shell
+        .map(|shell| crate::shell::shell_for_remote_path(std::path::Path::new(&shell)));
     Ok(TurnEnvironment::new(
         environment_id.to_string(),
         environment,
@@ -275,9 +289,9 @@ fn turn_environment_from_env_switch_metadata(
 /// 2. `environment_id` is `Some(LOCAL_ENVIRONMENT_ID)` → return the frozen
 ///    local turn environment when present, otherwise synthesize a local
 ///    environment from the live manager when local support is configured.
-/// 3. `environment_id` is `Some(id)` and `id` has current `env_switch`
-///    metadata visible to this thread → synthesize a `TurnEnvironment` using
-///    that metadata.
+/// 3. `environment_id` is `Some(id)`, `id` is visible to this thread, and
+///    current `env_switch` metadata exists (thread-scoped or global) →
+///    synthesize a `TurnEnvironment` using that metadata.
 /// 4. `environment_id` is `Some(id)` and `id` is in `turn.environments.turn_environments` →
 ///    clone and return it.
 /// 5. `environment_id` is `Some(id)`, not in `turn` but present in the live
@@ -350,13 +364,8 @@ pub(crate) async fn resolve_tool_environment(
         return turn_environment_from_env_switch_metadata(session, turn, env_id).map(Some);
     }
 
-    let thread_keys = environment_thread_keys(session, turn);
     if dynamic_environment_visible_to_thread(session, turn, env_id)
-        && session
-            .services
-            .environment_manager
-            .get_thread_environment_metadata_for_keys(&thread_keys, env_id)
-            .is_some()
+        && env_switch_metadata(session, turn, env_id).is_some()
     {
         return turn_environment_from_env_switch_metadata(session, turn, env_id).map(Some);
     }
@@ -773,6 +782,50 @@ mod tests {
         assert_eq!(resolved.environment_id, LOCAL_ENVIRONMENT_ID);
         assert_eq!(resolved.cwd(), &local_cwd);
         assert!(!resolved.environment.is_remote());
+    }
+
+    #[tokio::test]
+    async fn explicit_environment_uses_global_metadata_when_thread_metadata_is_missing() {
+        let (session, turn) = crate::session::tests::make_session_and_context().await;
+        let thread_key = session.thread_id.to_string();
+        let manager = &session.services.environment_manager;
+        manager
+            .upsert_environment(
+                "ssh:mine".to_string(),
+                "ws://127.0.0.1:8765".to_string(),
+                None,
+            )
+            .expect("seed remote environment");
+        // Only global metadata exists: the thread-scoped entry may have been
+        // evicted by the metadata size cap or written by another thread.
+        manager.set_environment_metadata(
+            "ssh:mine".to_string(),
+            EnvironmentMetadata {
+                cwd: "/remote/home".to_string(),
+                shell: Some("/nonexistent/remote/bin/bash".to_string()),
+            },
+        );
+        manager.record_thread_environment_id(thread_key, "ssh:mine".to_string());
+
+        let resolved = resolve_tool_environment(&session, &turn, Some("ssh:mine"))
+            .await
+            .expect("resolution should succeed")
+            .expect("environment should resolve");
+
+        assert_eq!(resolved.environment_id, "ssh:mine");
+        assert_eq!(
+            resolved.cwd().to_abs_path().expect("absolute cwd"),
+            AbsolutePathBuf::from_absolute_path("/remote/home").expect("remote cwd")
+        );
+        // The recorded remote shell path must be preserved verbatim, not
+        // re-resolved against the local filesystem.
+        assert_eq!(
+            resolved
+                .shell
+                .as_ref()
+                .map(|shell| shell.shell_path.as_path()),
+            Some(std::path::Path::new("/nonexistent/remote/bin/bash"))
+        );
     }
 
     #[tokio::test]

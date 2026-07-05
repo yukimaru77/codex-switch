@@ -44,6 +44,32 @@ fn detects_sh() {
 }
 
 #[test]
+fn shell_for_remote_path_keeps_remote_path_verbatim() {
+    let shell = shell_for_remote_path(std::path::Path::new("/nonexistent/remote/bin/bash"));
+
+    assert_eq!(
+        shell,
+        Shell {
+            shell_type: ShellType::Bash,
+            shell_path: PathBuf::from("/nonexistent/remote/bin/bash"),
+        }
+    );
+}
+
+#[test]
+fn shell_for_remote_path_defaults_unknown_shells_to_sh_semantics() {
+    let shell = shell_for_remote_path(std::path::Path::new("/remote/bin/fish"));
+
+    assert_eq!(
+        shell,
+        Shell {
+            shell_type: ShellType::Sh,
+            shell_path: PathBuf::from("/remote/bin/fish"),
+        }
+    );
+}
+
+#[test]
 fn can_run_on_shell_test() {
     let cmd = "echo \"Works\"";
     if cfg!(windows) {
