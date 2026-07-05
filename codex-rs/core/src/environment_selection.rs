@@ -936,17 +936,11 @@ fn resolve_environment_selections(
             .map(|metadata| AbsolutePathBuf::from_absolute_path_checked(&metadata.cwd))
             .transpose()
             .map_err(|err| CodexErr::InvalidRequest(err.to_string()))?
-            .unwrap_or(selected_environment.cwd.to_abs_path().map_err(|err| {
-                CodexErr::InvalidRequest(format!(
-                    "turn environment cwd `{}` is not valid on this host: {err}",
-                    selected_environment.cwd
-                ))
-            })?);
+            .map(|cwd| PathUri::from_abs_path(&cwd))
+            .unwrap_or_else(|| selected_environment.cwd.clone());
         let shell = metadata
             .and_then(|metadata| metadata.shell)
-            .map(|shell| {
-                crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell))
-            });
+            .map(|shell| crate::shell::shell_for_remote_path(std::path::Path::new(&shell)));
         turn_environments.push(TurnEnvironment::new(
             environment_id,
             environment,
