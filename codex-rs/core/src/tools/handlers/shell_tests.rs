@@ -297,11 +297,13 @@ async fn shell_command_handler_rejects_environment_id() {
         .to_string(),
     };
     let (session, turn) = make_session_and_context().await;
+    let turn = Arc::new(turn);
     let handler = ShellCommandHandler::from(codex_tools::ShellCommandBackendConfig::Classic);
     let result = handler
         .handle(ToolInvocation {
             session: session.into(),
-            turn: turn.into(),
+            step_context: StepContext::for_test(Arc::clone(&turn)),
+            turn,
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
             call_id: "call-shell-env".to_string(),
