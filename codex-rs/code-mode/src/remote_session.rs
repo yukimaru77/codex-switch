@@ -480,6 +480,17 @@ fn default_host_program() -> PathBuf {
     )
 }
 
+/// Returns true when the host program this provider would spawn appears to
+/// exist. Callers can use this to fall back to the in-process runtime
+/// instead of failing every session when the sibling
+/// `codex-code-mode-host` binary was not installed next to the `codex`
+/// executable. Relative paths (no `current_exe` parent) are optimistically
+/// treated as available since they resolve through `PATH` at spawn time.
+pub fn default_host_program_available() -> bool {
+    let path = default_host_program();
+    !path.is_absolute() || path.exists()
+}
+
 fn resolve_host_program(
     override_path: Option<OsString>,
     current_exe: io::Result<PathBuf>,
