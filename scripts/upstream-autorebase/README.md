@@ -21,7 +21,10 @@ launchd (6時間ごと)
             AI エージェントに一から移植させる
           - テスト失敗 → rebase 結果を保持したまま、失敗ログを提示して修復させる
           エージェント実行後に再検証。最大 3 回まで繰り返す
-       7. 成功 → origin へ push、worktree を削除(ブランチは残る)、macOS 通知
+       7. 成功 → origin へ push(HTTPS が workflow スコープで拒否されたら SSH URL に
+          フォールバック)、install-local.sh で codex + codex-code-mode-host を
+          ~/.local/share/codex-binaries/ にインストールしてシンボリックリンクを更新、
+          worktree を削除(ブランチは残る)、macOS 通知
           失敗 → worktree を残して通知(手動調査用)。同一バージョンの自動再試行は
           2 回まで(それ以降は AUTOREBASE_FORCE=1 が必要)
 ```
@@ -57,6 +60,8 @@ scripts/upstream-autorebase/install-scheduler.sh --uninstall
 | `AUTOREBASE_BRANCH_PREFIX` | `env-switch-monitor-v` | 追加機能ブランチの接頭辞 |
 | `AUTOREBASE_PUSH` | `1` | 成功時に push するか(`0` でローカルのみ) |
 | `AUTOREBASE_PUSH_REMOTE` | `origin` | push 先リモート |
+| `AUTOREBASE_PUSH_FALLBACK_URL` | origin の SSH URL を自動導出 | HTTPS push 失敗時の再試行先 |
+| `AUTOREBASE_INSTALL` | `1` | 成功時に install-local.sh でローカルへインストールするか |
 | `AUTOREBASE_AGENT_CMD` | `codex exec --dangerously-bypass-approvals-and-sandbox` | 修復エージェント。`claude --dangerously-skip-permissions -p` 等に変更可 |
 | `AUTOREBASE_MAX_REPAIR_ATTEMPTS` | `3` | 1 回の実行内での修復試行回数 |
 | `AUTOREBASE_MAX_RUNS_PER_VERSION` | `2` | 同一バージョンで failed になった後の自動再実行上限 |
