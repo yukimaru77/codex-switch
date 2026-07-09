@@ -118,16 +118,6 @@ pub fn should_persist_event_msg(ev: &EventMsg, history_mode: ThreadHistoryMode) 
         | EventMsg::ImageGenerationEnd(_)
         | EventMsg::SubAgentActivity(_)
         | EventMsg::MonitorNotification(_) => matches!(history_mode, ThreadHistoryMode::Legacy),
-        EventMsg::ItemCompleted(event) => {
-            // These items have no equivalent raw ResponseItem or legacy event,
-            // so persist their completion for replay without retaining every
-            // item lifecycle event.
-            matches!(
-                event.item,
-                codex_protocol::items::TurnItem::Plan(_)
-                    | codex_protocol::items::TurnItem::Sleep(_)
-            )
-        }
 
         // Transient, non-durable events.
         EventMsg::Error(_)
