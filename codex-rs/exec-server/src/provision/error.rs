@@ -1,6 +1,6 @@
 //! Error type for remote provisioning operations.
 
-use codex_client::BuildCustomCaTransportError;
+use codex_http_client::BuildCustomCaTransportError;
 
 /// Errors that can occur while probing or provisioning a remote codex binary.
 #[derive(Debug, thiserror::Error)]
