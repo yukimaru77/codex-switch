@@ -342,9 +342,17 @@ impl ThreadManager {
                 skills_service,
                 plugins_manager,
                 mcp_manager,
-                code_mode_session_provider: if config.features.enabled(Feature::CodeModeHost) {
+                code_mode_session_provider: if config.features.enabled(Feature::CodeModeHost)
+                    && codex_code_mode::default_host_program_available()
+                {
                     Arc::new(ProcessOwnedCodeModeSessionProvider::default())
                 } else {
+                    if config.features.enabled(Feature::CodeModeHost) {
+                        tracing::warn!(
+                            "codex-code-mode-host binary not found next to the codex executable; \
+                             falling back to in-process code mode"
+                        );
+                    }
                     Arc::new(InProcessCodeModeSessionProvider)
                 },
                 extensions,
