@@ -623,7 +623,7 @@ fn unified_exec_advises_env_switch_after_raw_ssh() -> Result<()> {
 async fn unified_exec_advises_env_switch_after_raw_ssh_inner() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
-    skip_if_windows!(Ok(()));
+    skip_if_host_windows!(Ok(()));
 
     let server = start_mock_server().await;
 
@@ -701,7 +701,7 @@ fn unified_exec_advises_env_switch_with_explicit_environment_id() -> Result<()> 
 async fn unified_exec_advises_env_switch_with_explicit_environment_id_inner() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
-    skip_if_windows!(Ok(()));
+    skip_if_host_windows!(Ok(()));
 
     let server = start_mock_server().await;
 
