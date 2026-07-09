@@ -11,6 +11,7 @@ pub use codex_code_mode_protocol::*;
 pub use remote_session::ProcessOwnedCodeModeSession;
 pub use remote_session::ProcessOwnedCodeModeSessionProvider;
 pub use remote_session::WebSocketCodeModeSessionProvider;
+pub use remote_session::default_host_program_available;
 pub use service::InProcessCodeModeSession;
 pub use service::InProcessCodeModeSessionProvider;
 pub use service::NoopCodeModeSessionDelegate;
