@@ -7,7 +7,7 @@
 //! and `codex-rs/tui/src/updates.rs`.  Unifying these into a shared crate
 //! (e.g. `codex-updates`) is left as a follow-up to keep this PR's diff small.
 
-use codex_client::build_reqwest_client_with_custom_ca;
+use codex_http_client::build_reqwest_client_with_custom_ca;
 use reqwest::StatusCode;
 use serde::Deserialize;
 
