@@ -22,6 +22,7 @@ UPSTREAM_REMOTE="${AUTOREBASE_UPSTREAM_REMOTE:-upstream}"
 UPSTREAM_REPO="${AUTOREBASE_UPSTREAM_REPO:-openai/codex}"
 PUSH_REMOTE="${AUTOREBASE_PUSH_REMOTE:-origin}"
 PUSH_ENABLED="${AUTOREBASE_PUSH:-1}"
+INSTALL_ENABLED="${AUTOREBASE_INSTALL:-1}"
 MAX_REPAIR_ATTEMPTS="${AUTOREBASE_MAX_REPAIR_ATTEMPTS:-3}"
 MAX_RUNS_PER_VERSION="${AUTOREBASE_MAX_RUNS_PER_VERSION:-2}"
 AGENT_TIMEOUT="${AUTOREBASE_AGENT_TIMEOUT_SECONDS:-10800}"
@@ -367,6 +368,17 @@ if [ "$PUSH_ENABLED" = "1" ]; then
     fi
 else
     record "$NEW_VERSION" "succeeded_local"
+fi
+
+if [ "$INSTALL_ENABLED" = "1" ]; then
+    log "Installing binaries locally (AUTOREBASE_INSTALL=0 to disable)..."
+    if "$SCRIPT_DIR/install-local.sh" "$WT" >> "$LOG_DIR/install-$NEW_VERSION.log" 2>&1; then
+        record "$NEW_VERSION" "installed"
+        log "Install finished (log: $LOG_DIR/install-$NEW_VERSION.log)"
+    else
+        log "WARNING: local install failed; see $LOG_DIR/install-$NEW_VERSION.log"
+        record "$NEW_VERSION" "install_failed"
+    fi
 fi
 
 log "Removing worktree (branch $NEW_BRANCH is kept)..."
