@@ -18,7 +18,6 @@ mod noise_channel;
 mod noise_relay;
 mod process;
 mod process_sandbox;
-mod protocol;
 pub mod provision;
 mod regular_file;
 mod relay;
