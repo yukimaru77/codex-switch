@@ -4,7 +4,7 @@ use std::fmt::Write as FmtWrite;
 use std::process::Stdio;
 use std::time::Duration;
 
-use codex_client::build_reqwest_client_with_custom_ca;
+use codex_http_client::build_reqwest_client_with_custom_ca;
 use futures::StreamExt;
 use reqwest::StatusCode;
 use sha2::Digest;
