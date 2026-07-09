@@ -100,16 +100,23 @@ NEW_VERSION="${LATEST_TAG#$TAG_PREFIX}"
 log "Latest upstream release: $LATEST_TAG"
 
 # --------------------------------------- find our current ported version
-CUR_VERSION="$(
+# Branch suffixes may be full (0.144.0) or short (0.144, implying patch .0).
+# Emit "<normalized> <verbatim>" pairs so comparisons/tags use X.Y.Z while
+# the branch name is preserved as-is.
+CUR_PICK="$(
     {
         git branch --list "${BRANCH_PREFIX}*" | sed 's/^[* ]*//'
         git ls-remote --heads "$PUSH_REMOTE" "refs/heads/${BRANCH_PREFIX}*" 2>/dev/null \
             | sed 's|.*refs/heads/||'
     } | sed "s/^${BRANCH_PREFIX}//" \
-      | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
+      | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+      | awk -F. 'NF == 3 { print $0 " " $0 } NF == 2 { print $0 ".0 " $0 }' \
+      | sort -V | tail -1
 )"
-[ -n "$CUR_VERSION" ] || die "no existing ${BRANCH_PREFIX}* branch found"
-log "Current ported version: $CUR_VERSION"
+[ -n "$CUR_PICK" ] || die "no existing ${BRANCH_PREFIX}* branch found"
+CUR_VERSION="${CUR_PICK%% *}"
+CUR_BRANCH_VERSION="${CUR_PICK##* }"
+log "Current ported version: $CUR_VERSION (branch ${BRANCH_PREFIX}${CUR_BRANCH_VERSION})"
 
 HIGHEST="$(printf '%s\n%s\n' "$CUR_VERSION" "$NEW_VERSION" | sort -V | tail -1)"
 if [ "$NEW_VERSION" = "$CUR_VERSION" ] || [ "$HIGHEST" != "$NEW_VERSION" ]; then
@@ -118,7 +125,7 @@ if [ "$NEW_VERSION" = "$CUR_VERSION" ] || [ "$HIGHEST" != "$NEW_VERSION" ]; then
 fi
 
 OLD_TAG="${TAG_PREFIX}${CUR_VERSION}"
-OLD_BRANCH="${BRANCH_PREFIX}${CUR_VERSION}"
+OLD_BRANCH="${BRANCH_PREFIX}${CUR_BRANCH_VERSION}"
 NEW_BRANCH="${BRANCH_PREFIX}${NEW_VERSION}"
 WT="$WORKTREE_ROOT/$NEW_BRANCH"
 
@@ -335,9 +342,25 @@ if [ "$ATTEMPT" -gt 0 ]; then
 fi
 
 if [ "$PUSH_ENABLED" = "1" ]; then
+    # HTTPS pushes through an OAuth token without the `workflow` scope are
+    # rejected whenever the rebase touches .github/workflows; fall back to
+    # the SSH remote URL, which is not scope-restricted.
+    PUSH_FALLBACK_URL="${AUTOREBASE_PUSH_FALLBACK_URL:-}"
+    if [ -z "$PUSH_FALLBACK_URL" ]; then
+        _origin_url="$(git remote get-url "$PUSH_REMOTE" 2>/dev/null || true)"
+        case "$_origin_url" in
+            https://github.com/*)
+                PUSH_FALLBACK_URL="git@github.com:${_origin_url#https://github.com/}"
+                ;;
+        esac
+    fi
     log "Pushing $NEW_BRANCH to $PUSH_REMOTE..."
     if git -C "$WT" push "$PUSH_REMOTE" "$NEW_BRANCH"; then
         record "$NEW_VERSION" "pushed" "{\"remote\":\"$PUSH_REMOTE\"}"
+    elif [ -n "$PUSH_FALLBACK_URL" ] \
+        && log "Push to $PUSH_REMOTE failed; retrying via $PUSH_FALLBACK_URL..." \
+        && git -C "$WT" push "$PUSH_FALLBACK_URL" "$NEW_BRANCH"; then
+        record "$NEW_VERSION" "pushed" "{\"remote\":\"$PUSH_FALLBACK_URL\"}"
     else
         log "WARNING: push failed; branch remains local."
         record "$NEW_VERSION" "push_failed"
