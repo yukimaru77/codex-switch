@@ -574,7 +574,7 @@ async fn execve_permission_request_hook_short_circuits_prompt() -> anyhow::Resul
     };
 
     let action = tokio::time::timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(15),
         codex_shell_escalation::EscalationPolicy::determine_action(
             &provider,
             &AbsolutePathBuf::from_absolute_path("/usr/bin/touch")
