@@ -1172,14 +1172,16 @@ pub(crate) async fn apply_bespoke_event_handling(
         }
 
         EventMsg::MonitorNotification(event) => {
-            outgoing.send_server_notification(ServerNotification::MonitorNotification(
-                codex_app_server_protocol::MonitorNotificationNotification {
-                    thread_id: conversation_id.to_string(),
-                    monitor_name: event.monitor_name,
-                    summary: event.summary,
-                    kind: event.kind,
-                },
-            )).await;
+            outgoing
+                .send_server_notification(ServerNotification::MonitorNotification(
+                    codex_app_server_protocol::MonitorNotificationNotification {
+                        thread_id: conversation_id.to_string(),
+                        monitor_name: event.monitor_name,
+                        summary: event.summary,
+                        kind: event.kind,
+                    },
+                ))
+                .await;
         }
 
         _ => {}

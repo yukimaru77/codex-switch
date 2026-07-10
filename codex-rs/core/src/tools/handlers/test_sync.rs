@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde::Deserialize;
 use tokio::sync::Barrier;
+use tokio::time::Instant;
 use tokio::time::sleep;
 
 use crate::function_tool::FunctionCallError;
@@ -47,6 +49,12 @@ struct TestSyncArgs {
     sleep_after_ms: Option<u64>,
     #[serde(default)]
     barrier: Option<BarrierArgs>,
+    #[serde(default)]
+    touch_path: Option<PathBuf>,
+    #[serde(default)]
+    wait_for_paths: Vec<PathBuf>,
+    #[serde(default = "default_timeout_ms")]
+    wait_timeout_ms: u64,
 }
 
 fn default_timeout_ms() -> u64 {
@@ -101,6 +109,49 @@ impl TestSyncHandler {
 
         if let Some(barrier) = args.barrier {
             wait_on_barrier(barrier).await?;
+        }
+
+        if let Some(path) = args.touch_path {
+            tokio::fs::write(&path, b"started").await.map_err(|err| {
+                FunctionCallError::RespondToModel(format!(
+                    "failed to write test_sync_tool touch path {}: {err}",
+                    path.display()
+                ))
+            })?;
+        }
+
+        if !args.wait_for_paths.is_empty() {
+            let timeout = Duration::from_millis(args.wait_timeout_ms);
+            let started = Instant::now();
+
+            loop {
+                let mut missing = Vec::new();
+                for path in &args.wait_for_paths {
+                    match tokio::fs::try_exists(path).await {
+                        Ok(true) => {}
+                        Ok(false) => missing.push(path.display().to_string()),
+                        Err(err) => {
+                            return Err(FunctionCallError::RespondToModel(format!(
+                                "failed to check test_sync_tool wait path {}: {err}",
+                                path.display()
+                            )));
+                        }
+                    }
+                }
+
+                if missing.is_empty() {
+                    break;
+                }
+
+                if started.elapsed() >= timeout {
+                    return Err(FunctionCallError::RespondToModel(format!(
+                        "test_sync_tool wait timed out waiting for {}",
+                        missing.join(", ")
+                    )));
+                }
+
+                sleep(Duration::from_millis(10)).await;
+            }
         }
 
         if let Some(delay) = args.sleep_after_ms
