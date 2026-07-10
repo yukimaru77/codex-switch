@@ -363,6 +363,23 @@ pub(crate) async fn resolve_tool_environment(
         return Ok(Some(found.clone()));
     }
 
+    if let Some(starting) = turn
+        .environments
+        .starting
+        .iter()
+        .find(|environment| environment.selection.environment_id == env_id)
+    {
+        return match starting.resolved() {
+            Some(Ok(environment)) => Ok(Some(environment)),
+            Some(Err(err)) => Err(FunctionCallError::RespondToModel(format!(
+                "environment `{env_id}` failed to start: {err}"
+            ))),
+            None => Err(FunctionCallError::RespondToModel(format!(
+                "environment `{env_id}` is still starting; call wait_for_environment first"
+            ))),
+        };
+    }
+
     // Live fallback: look up through EnvironmentManager (for dynamically
     // registered environments, e.g. registered by env_switch in the same turn).
     // Only ids recorded for this thread or its parent are visible here; the
@@ -391,6 +408,12 @@ pub(crate) fn default_tool_environment_id(session: &Session, turn: &TurnContext)
         turn.environments
             .primary()
             .map(|environment| environment.environment_id.clone())
+            .or_else(|| {
+                turn.environments
+                    .starting
+                    .first()
+                    .map(|environment| environment.selection.environment_id.clone())
+            })
     })
 }
 
