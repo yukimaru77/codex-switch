@@ -2705,6 +2705,10 @@ async fn remote_compact_trim_estimate_uses_session_base_instructions() -> Result
             .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
             .with_config(|config| {
                 config.model_context_window = Some(200_000);
+                config
+                    .features
+                    .disable(Feature::EnvSwitch)
+                    .expect("test config should allow disabling env_switch");
             }),
     )
     .await?;
@@ -2784,7 +2788,7 @@ async fn remote_compact_trim_estimate_uses_session_base_instructions() -> Result
         baseline_compact_request.instructions_text(),
         "x".repeat(8_000)
     );
-    let override_context_window = baseline_payload_tokens.saturating_add(500);
+    let override_context_window = baseline_payload_tokens.saturating_sub(500);
     let pretrim_override_estimate =
         baseline_input_tokens.saturating_add(approx_token_count(&override_base_instructions));
     assert!(
@@ -2800,6 +2804,10 @@ async fn remote_compact_trim_estimate_uses_session_base_instructions() -> Result
                 move |config| {
                     config.model_context_window = Some(override_context_window);
                     config.base_instructions = Some(override_base_instructions);
+                    config
+                        .features
+                        .disable(Feature::EnvSwitch)
+                        .expect("test config should allow disabling env_switch");
                 }
             }),
     )

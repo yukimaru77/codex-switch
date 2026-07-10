@@ -1,11 +1,17 @@
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
-use codex_protocol::protocol::{MonitorEvent, MonitorEventKind, MonitorWakePolicy};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use tokio::process::{Child, Command};
+use codex_protocol::protocol::MonitorEvent;
+use codex_protocol::protocol::MonitorEventKind;
+use codex_protocol::protocol::MonitorWakePolicy;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncReadExt;
+use tokio::io::BufReader;
+use tokio::process::Child;
+use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -151,9 +157,7 @@ impl MonitorManager {
                     summary,
                     wake_policy: MonitorWakePolicy::AttachOrWake,
                 };
-                event_sender.send(AppEvent::CodexOp(
-                    AppCommand::MonitorEvent { event },
-                ));
+                event_sender.send(AppEvent::CodexOp(AppCommand::MonitorEvent { event }));
             }
 
             let mut monitors = monitors_ref.lock().await;
@@ -181,9 +185,7 @@ impl MonitorManager {
                     summary: format!("Monitor '{}' has stopped.", monitor_name),
                     wake_policy: MonitorWakePolicy::AttachOrWake,
                 };
-                event_sender.send(AppEvent::CodexOp(
-                    AppCommand::MonitorEvent { event },
-                ));
+                event_sender.send(AppEvent::CodexOp(AppCommand::MonitorEvent { event }));
             }
         });
 

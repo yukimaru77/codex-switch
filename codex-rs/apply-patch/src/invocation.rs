@@ -596,7 +596,7 @@ mod tests {
         assert_matches!(
             maybe_parse_apply_patch_verified(
                 &args,
-                &AbsolutePathBuf::from_absolute_path(dir.path()).unwrap(),
+                &PathUri::from_host_native_path(dir.path()).expect("absolute test path"),
                 LOCAL_FS.as_ref(),
                 /*sandbox*/ None,
             )
