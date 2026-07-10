@@ -6782,7 +6782,7 @@ async fn turn_environments_set_primary_environment() {
 }
 
 #[tokio::test]
-async fn remote_primary_environment_does_not_retarget_turn_context_cwd() {
+async fn remote_environment_selection_does_not_retarget_turn_context_cwd() {
     let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;
     let local_cwd = session.get_config().await.cwd.clone();
     let remote_cwd = AbsolutePathBuf::from_absolute_path("/remote/project").expect("remote cwd");
@@ -6826,13 +6826,18 @@ async fn remote_primary_environment_does_not_retarget_turn_context_cwd() {
         .await
         .expect("turn should start");
 
-    let primary_environment = turn_context
-        .environments
-        .primary()
-        .expect("primary environment should be set");
-    assert_eq!(primary_environment.environment_id, "ssh:mine");
+    let selected_environment = session
+        .state
+        .lock()
+        .await
+        .session_configuration
+        .environment_selections()
+        .first()
+        .cloned()
+        .expect("remote environment selection should be preserved");
+    assert_eq!(selected_environment.environment_id, "ssh:mine");
     assert_eq!(
-        primary_environment.cwd(),
+        &selected_environment.cwd,
         &PathUri::from_abs_path(&remote_cwd)
     );
     #[allow(deprecated)]
