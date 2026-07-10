@@ -4,13 +4,14 @@
 use core_test_support::test_codex::local_selections;
 use std::fs;
 use std::time::Duration;
-use std::time::Instant;
 
+use codex_features::Feature;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
 use codex_protocol::user_input::UserInput;
+use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
@@ -69,23 +70,39 @@ async fn run_turn(test: &TestCodex, prompt: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_turn_and_measure(test: &TestCodex, prompt: &str) -> anyhow::Result<Duration> {
-    let start = Instant::now();
-    run_turn(test, prompt).await?;
-    Ok(start.elapsed())
-}
-
 async fn build_codex_with_test_tool(server: &wiremock::MockServer) -> anyhow::Result<TestCodex> {
-    let mut builder = test_codex().with_model("test-gpt-5.1-codex");
+    let mut builder = test_codex()
+        .with_model("test-gpt-5.1-codex")
+        .with_config(|config| {
+            config
+                .features
+                .disable(Feature::UnifiedExec)
+                .expect("test config should allow feature update");
+        });
     builder.build(server).await
 }
 
-fn assert_parallel_duration(actual: Duration) {
-    // Allow headroom for slow CI scheduling; barrier synchronization already enforces overlap.
-    assert!(
-        actual < Duration::from_millis(1_600),
-        "expected parallel execution to finish quickly, got {actual:?}"
-    );
+fn output_text(req: &ResponsesRequest, call_id: &str) -> String {
+    let (content, _success) = req
+        .function_call_output_content_and_success(call_id)
+        .expect("function_call_output present");
+    content.expect("function_call_output content present")
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn shell_file_barrier_command(
+    own_path: &std::path::Path,
+    peer_path: &std::path::Path,
+    marker: &str,
+) -> String {
+    let own_path = shell_quote(&own_path.display().to_string());
+    let peer_path = shell_quote(&peer_path.display().to_string());
+    format!(
+        "touch {own_path}; i=0; while [ ! -e {peer_path} ]; do i=$((i+1)); if [ \"$i\" -gt 100 ]; then echo barrier timeout >&2; exit 42; fi; sleep 0.05; done; echo {marker}"
+    )
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -144,8 +161,7 @@ async fn read_file_tools_run_in_parallel() -> anyhow::Result<()> {
 
     run_turn(&test, "warm up parallel tool").await?;
 
-    let duration = run_turn_and_measure(&test, "exercise sync tool").await?;
-    assert_parallel_duration(duration);
+    run_turn(&test, "exercise sync tool").await?;
 
     Ok(())
 }
@@ -155,17 +171,29 @@ async fn shell_tools_run_in_parallel() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_model("gpt-5.4");
+    let mut builder = test_codex().with_model("gpt-5.4").with_config(|config| {
+        config
+            .features
+            .disable(Feature::UnifiedExec)
+            .expect("test config should allow feature update");
+    });
     let test = builder.build(&server).await?;
 
-    let shell_args = json!({
-        "command": "sleep 0.25",
-        // Avoid user-specific shell startup cost (e.g. zsh profile scripts) in timing assertions.
+    let barrier_dir = test.cwd.path().join("shell-parallel-barrier");
+    fs::create_dir_all(&barrier_dir)?;
+    let first_started = barrier_dir.join("first.started");
+    let second_started = barrier_dir.join("second.started");
+
+    let args_one = serde_json::to_string(&json!({
+        "command": shell_file_barrier_command(&first_started, &second_started, "barrier-ok-one"),
         "login": false,
-        "timeout_ms": 1_000,
-    });
-    let args_one = serde_json::to_string(&shell_args)?;
-    let args_two = serde_json::to_string(&shell_args)?;
+        "timeout_ms": 5_000,
+    }))?;
+    let args_two = serde_json::to_string(&json!({
+        "command": shell_file_barrier_command(&second_started, &first_started, "barrier-ok-two"),
+        "login": false,
+        "timeout_ms": 5_000,
+    }))?;
 
     let first_response = sse(vec![
         json!({"type": "response.created", "response": {"id": "resp-1"}}),
@@ -177,10 +205,22 @@ async fn shell_tools_run_in_parallel() -> anyhow::Result<()> {
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
     ]);
-    mount_sse_sequence(&server, vec![first_response, second_response]).await;
+    mount_sse_once(&server, first_response).await;
+    let tool_output_request = mount_sse_once(&server, second_response).await;
 
-    let duration = run_turn_and_measure(&test, "run shell_command twice").await?;
-    assert_parallel_duration(duration);
+    run_turn(&test, "run shell_command twice").await?;
+
+    let req = tool_output_request.single_request();
+    let output_one = output_text(&req, "call-1");
+    let output_two = output_text(&req, "call-2");
+    assert!(
+        output_one.contains("barrier-ok-one"),
+        "unexpected first output: {output_one}"
+    );
+    assert!(
+        output_two.contains("barrier-ok-two"),
+        "unexpected second output: {output_two}"
+    );
 
     Ok(())
 }
@@ -192,15 +232,21 @@ async fn mixed_parallel_tools_run_in_parallel() -> anyhow::Result<()> {
     let server = start_mock_server().await;
     let test = build_codex_with_test_tool(&server).await?;
 
+    let barrier_dir = test.cwd.path().join("mixed-parallel-barrier");
+    fs::create_dir_all(&barrier_dir)?;
+    let sync_started = barrier_dir.join("sync.started");
+    let shell_started = barrier_dir.join("shell.started");
+
     let sync_args = json!({
-        "sleep_after_ms": 300
+        "touch_path": sync_started,
+        "wait_for_paths": [shell_started],
+        "wait_timeout_ms": 5_000,
     })
     .to_string();
     let shell_args = serde_json::to_string(&json!({
-        "command": "sleep 0.25",
-        // Avoid user-specific shell startup cost in timing assertions.
+        "command": shell_file_barrier_command(&shell_started, &sync_started, "barrier-ok-shell"),
         "login": false,
-        "timeout_ms": 1_000,
+        "timeout_ms": 5_000,
     }))?;
 
     let first_response = sse(vec![
@@ -213,10 +259,19 @@ async fn mixed_parallel_tools_run_in_parallel() -> anyhow::Result<()> {
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
     ]);
-    mount_sse_sequence(&server, vec![first_response, second_response]).await;
+    mount_sse_once(&server, first_response).await;
+    let tool_output_request = mount_sse_once(&server, second_response).await;
 
-    let duration = run_turn_and_measure(&test, "mix tools").await?;
-    assert_parallel_duration(duration);
+    run_turn(&test, "mix tools").await?;
+
+    let req = tool_output_request.single_request();
+    let sync_output = output_text(&req, "call-1");
+    let shell_output = output_text(&req, "call-2");
+    assert_eq!(sync_output, "ok");
+    assert!(
+        shell_output.contains("barrier-ok-shell"),
+        "unexpected shell output: {shell_output}"
+    );
 
     Ok(())
 }
