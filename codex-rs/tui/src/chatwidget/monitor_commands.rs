@@ -13,15 +13,9 @@ impl ChatWidget {
             "cancelled" => "Monitor cancelled",
             _ => "Monitor",
         };
-        let message = format!(
-            "{}: \"{}\"",
-            prefix, notification.monitor_name
-        );
+        let message = format!("{}: \"{}\"", prefix, notification.monitor_name);
         if notification.kind == "output" {
-            self.add_info_message(
-                format!("{}\n{}", message, notification.summary),
-                None,
-            );
+            self.add_info_message(format!("{}\n{}", message, notification.summary), None);
         } else {
             self.add_info_message(message, None);
         }
@@ -33,9 +27,7 @@ impl ChatWidget {
         match parts.first().copied() {
             Some("start") => {
                 if parts.len() < 3 {
-                    self.add_error_message(
-                        "Usage: /monitor start <name> <command>".to_string(),
-                    );
+                    self.add_error_message("Usage: /monitor start <name> <command>".to_string());
                     return;
                 }
                 let name = parts[1].to_string();
@@ -62,10 +54,7 @@ impl ChatWidget {
                     }
                 });
 
-                self.add_info_message(
-                    format!("Monitor '{}' started: {}", name, command),
-                    None,
-                );
+                self.add_info_message(format!("Monitor '{}' started: {}", name, command), None);
             }
             Some("stop") => {
                 if parts.len() < 2 {
@@ -94,9 +83,7 @@ impl ChatWidget {
             }
             Some("emit") => {
                 if parts.len() < 2 {
-                    self.add_error_message(
-                        "Usage: /monitor emit <message>".to_string(),
-                    );
+                    self.add_error_message("Usage: /monitor emit <message>".to_string());
                     return;
                 }
                 let message = args.strip_prefix("emit").unwrap_or("").trim().to_string();
@@ -111,9 +98,7 @@ impl ChatWidget {
                 self.submit_op(crate::app_command::AppCommand::MonitorEvent { event });
             }
             _ => {
-                self.add_error_message(
-                    "Usage: /monitor start|stop|status|emit <args>".to_string(),
-                );
+                self.add_error_message("Usage: /monitor start|stop|status|emit <args>".to_string());
             }
         }
         self.request_redraw();

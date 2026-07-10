@@ -678,9 +678,7 @@ pub enum Op {
     },
 
     /// A monitor event from a background process.
-    MonitorEvent {
-        event: MonitorEvent,
-    },
+    MonitorEvent { event: MonitorEvent },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, JsonSchema)]
@@ -878,7 +876,10 @@ pub enum MonitorEventKind {
     /// The monitored process exited successfully.
     Completed { exit_code: i32 },
     /// The monitored process exited with a non-zero status.
-    Failed { exit_code: i32, stderr_tail: Option<String> },
+    Failed {
+        exit_code: i32,
+        stderr_tail: Option<String>,
+    },
     /// The monitored process was killed due to timeout.
     TimedOut,
     /// The monitored process was stopped by the user.

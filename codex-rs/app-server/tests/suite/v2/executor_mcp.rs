@@ -48,11 +48,9 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(20);
-const EXECUTOR_HTTP_MCP_URL: &str = "http://executor-only.invalid/mcp";
 const HTTP_MCP_SERVER_NAME: &str = "executor_http";
 const MCP_SERVER_NAME: &str = "executor_demo";
 const OAUTH_MCP_SERVER_NAME: &str = "executor_oauth";
-const EXECUTOR_OAUTH_MCP_URL: &str = "http://oauth-only.invalid/oauth-mcp";
 const EXECUTOR_ENV_NAME: &str = "MCP_EXECUTOR_MARKER";
 const EXECUTOR_ENV_VALUE: &str = "executor-only";
 const EXECUTOR_ID: &str = "executor-1";
@@ -64,8 +62,9 @@ async fn selected_executor_plugin_exposes_its_mcps_only_to_that_thread() -> Resu
     let responses_server = responses::start_mock_server().await;
     let http_listener = TcpListener::bind("127.0.0.1:0").await?;
     let http_addr = http_listener.local_addr()?;
-    let http_server_config = StreamableHttpServerConfig::default()
-        .with_allowed_hosts(["executor-only.invalid", "oauth-only.invalid"]);
+    let executor_http_mcp_url = format!("http://{http_addr}/mcp");
+    let executor_oauth_mcp_url = format!("http://{http_addr}/oauth-mcp");
+    let http_server_config = StreamableHttpServerConfig::default();
     let http_mcp_service = StreamableHttpService::new(
         || Ok(ExecutorHttpMcpServer),
         Arc::new(LocalSessionManager::default()),
@@ -79,7 +78,7 @@ async fn selected_executor_plugin_exposes_its_mcps_only_to_that_thread() -> Resu
     let (token_request_tx, mut token_request_rx) = mpsc::unbounded_channel();
     let oauth_metadata = json!({
         "authorization_endpoint": "https://oauth-only.invalid/authorize",
-        "token_endpoint": "http://oauth-only.invalid/token",
+        "token_endpoint": format!("http://{http_addr}/token"),
         "scopes_supported": ["read", "write"],
         "response_types_supported": ["code"],
         "code_challenge_methods_supported": ["S256"],
@@ -122,7 +121,6 @@ async fn selected_executor_plugin_exposes_its_mcps_only_to_that_thread() -> Resu
             .to_string_lossy()
             .into_owned(),
     );
-    let http_proxy = toml::Value::String(format!("http://{http_addr}"));
     std::fs::write(
         codex_home.path().join("environments.toml"),
         format!(
@@ -135,7 +133,6 @@ program = {codex_bin}
 args = ["exec-server", "--listen", "stdio"]
 [environments.env]
 {EXECUTOR_ENV_NAME} = "{EXECUTOR_ENV_VALUE}"
-HTTP_PROXY = {http_proxy}
 "#
         ),
     )?;
@@ -156,12 +153,12 @@ HTTP_PROXY = {http_proxy}
                     "startup_timeout_sec": 10,
                 },
                 (HTTP_MCP_SERVER_NAME): {
-                    "url": EXECUTOR_HTTP_MCP_URL,
+                    "url": executor_http_mcp_url,
                     "environment_id": "local",
                     "startup_timeout_sec": 10,
                 },
                 (OAUTH_MCP_SERVER_NAME): {
-                    "url": EXECUTOR_OAUTH_MCP_URL,
+                    "url": executor_oauth_mcp_url,
                     "environment_id": "local",
                     "oauth": {"clientId": "executor-oauth-client"},
                     "startup_timeout_sec": 10,

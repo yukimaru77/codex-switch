@@ -10,6 +10,9 @@ path = "junit.xml"
 
 [profile.local]
 inherits = "default"
+# Keep full local workspace runs below the process and disk-I/O saturation point.
+# Individual test binaries remain free to use their own internal concurrency.
+test-threads = 4
 
 [test-groups.app_server_protocol_codegen]
 max-threads = 1
@@ -22,7 +25,13 @@ max-threads = 1
 [test-groups.app_server_integration_local]
 max-threads = 4
 
+[test-groups.app_server_zsh_fork]
+max-threads = 1
+
 [test-groups.core_apply_patch_cli_integration]
+max-threads = 1
+
+[test-groups.core_realtime_integration]
 max-threads = 1
 
 [test-groups.windows_sandbox_legacy_sessions]
@@ -57,10 +66,24 @@ filter = 'package(codex-app-server) & kind(test)'
 test-group = 'app_server_integration_local'
 
 [[profile.default.overrides]]
+filter = 'package(codex-app-server) & kind(test) & test(turn_start_zsh_fork)'
+test-group = 'app_server_zsh_fork'
+
+[[profile.local.overrides]]
+filter = 'package(codex-app-server) & kind(test) & test(turn_start_zsh_fork)'
+test-group = 'app_server_zsh_fork'
+
+[[profile.default.overrides]]
 # These tests exercise full Codex turns and apply_patch execution, and they are
 # sensitive to Windows runner process-startup stalls when many cases launch at once.
 filter = 'package(codex-core) & kind(test) & test(apply_patch_cli)'
 test-group = 'core_apply_patch_cli_integration'
+
+[[profile.default.overrides]]
+# Realtime integration tests use short websocket deadlines and contend heavily
+# when many test runtimes start at once.
+filter = 'package(codex-core) & kind(test) & test(realtime_conversation)'
+test-group = 'core_realtime_integration'
 
 [[profile.default.overrides]]
 # These tests create restricted-token Windows child processes and private desktops.
