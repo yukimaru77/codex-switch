@@ -154,7 +154,14 @@ assert os.read(master, 4) == b"ping""#
 
     let output = run_test_cmd(tmp, cmd).await.unwrap();
     assert_eq!(output.stdout.text, "");
-    assert_eq!(output.stderr.text, "");
+    assert!(
+        output.stderr.text.lines().all(|line| {
+            line.contains("confstr() failed with code 5")
+                || line.contains("couldn't create cache file '/tmp/xcrun_db-")
+        }),
+        "unexpected python stderr: {}",
+        output.stderr.text
+    );
 }
 
 /// Writing a file fails and should be considered a sandbox error

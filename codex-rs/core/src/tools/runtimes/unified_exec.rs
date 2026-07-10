@@ -542,9 +542,9 @@ mod tests {
                 proposed_execpolicy_amendment: None,
             },
         );
-        request.turn_environment.environment_id = "remote".to_string();
+        request.environment_id = "remote".to_string();
         let original_key = runtime.approval_keys(&request);
-        request.turn_environment.environment_id = "other".to_string();
+        request.environment_id = "other".to_string();
         let other_key = runtime.approval_keys(&request);
 
         assert_ne!(original_key, other_key);

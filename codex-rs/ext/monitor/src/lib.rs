@@ -1,17 +1,33 @@
 use std::collections::HashMap;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
+use std::sync::Weak;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
-use codex_extension_api::{
-    ExtensionData, ExtensionFuture, ExtensionRegistryBuilder, FunctionCallError, JsonToolOutput,
-    ThreadStartInput, ToolCall, ToolContributor, ToolExecutor, ToolName, ToolOutput, ToolSpec,
-};
-use codex_protocol::protocol::{MonitorEvent, MonitorEventKind, MonitorWakePolicy, Op};
+use codex_extension_api::ExtensionData;
+use codex_extension_api::ExtensionFuture;
+use codex_extension_api::ExtensionRegistryBuilder;
+use codex_extension_api::FunctionCallError;
+use codex_extension_api::JsonToolOutput;
+use codex_extension_api::ThreadStartInput;
+use codex_extension_api::ToolCall;
+use codex_extension_api::ToolContributor;
+use codex_extension_api::ToolExecutor;
+use codex_extension_api::ToolName;
+use codex_extension_api::ToolOutput;
+use codex_extension_api::ToolSpec;
 use codex_protocol::ThreadId;
-use codex_tools::{JsonSchema, ResponsesApiTool};
+use codex_protocol::protocol::MonitorEvent;
+use codex_protocol::protocol::MonitorEventKind;
+use codex_protocol::protocol::MonitorWakePolicy;
+use codex_protocol::protocol::Op;
+use codex_tools::JsonSchema;
+use codex_tools::ResponsesApiTool;
 use serde::Deserialize;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncReadExt;
+use tokio::io::BufReader;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -90,16 +106,12 @@ fn start_spec() -> ToolSpec {
                 (
                     "name".to_string(),
                     JsonSchema::string(Some(
-                        "Unique name for this monitor (alphanumeric, dash, underscore)."
-                            .into(),
+                        "Unique name for this monitor (alphanumeric, dash, underscore).".into(),
                     )),
                 ),
                 (
                     "command".to_string(),
-                    JsonSchema::string(Some(
-                        "The shell command to run in the background."
-                            .into(),
-                    )),
+                    JsonSchema::string(Some("The shell command to run in the background.".into())),
                 ),
             ]),
             Some(vec!["name".into(), "command".into()]),
@@ -133,8 +145,10 @@ fn stop_spec() -> ToolSpec {
 fn list_spec() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: MONITOR_LIST_TOOL.to_string(),
-        description: "List all currently running background monitors with their names and commands. \
-            Bug reports: https://github.com/yukimaru77/codex-switch/issues".to_string(),
+        description:
+            "List all currently running background monitors with their names and commands. \
+            Bug reports: https://github.com/yukimaru77/codex-switch/issues"
+                .to_string(),
         strict: true,
         defer_loading: None,
         parameters: JsonSchema::object(
@@ -149,9 +163,7 @@ fn list_spec() -> ToolSpec {
 // P0-1: Name validation to prevent injection
 fn validate_name(name: &str) -> Result<(), String> {
     if name.is_empty() || name.len() > MAX_NAME_LEN {
-        return Err(format!(
-            "Monitor name must be 1-{MAX_NAME_LEN} characters."
-        ));
+        return Err(format!("Monitor name must be 1-{MAX_NAME_LEN} characters."));
     }
     if !name
         .chars()
@@ -188,15 +200,15 @@ impl ToolExecutor<ToolCall> for MonitorToolExecutor {
         Box::pin(async move {
             match kind {
                 MonitorToolKind::Start => {
-                    let args: StartArgs =
-                        serde_json::from_str(invocation.function_arguments()?).map_err(|e| {
+                    let args: StartArgs = serde_json::from_str(invocation.function_arguments()?)
+                        .map_err(|e| {
                             FunctionCallError::RespondToModel(format!("Invalid arguments: {e}"))
                         })?;
                     start_monitor(state, args).await
                 }
                 MonitorToolKind::Stop => {
-                    let args: StopArgs =
-                        serde_json::from_str(invocation.function_arguments()?).map_err(|e| {
+                    let args: StopArgs = serde_json::from_str(invocation.function_arguments()?)
+                        .map_err(|e| {
                             FunctionCallError::RespondToModel(format!("Invalid arguments: {e}"))
                         })?;
                     stop_monitor(state, args).await
@@ -239,9 +251,10 @@ async fn start_monitor(
         .spawn()
         .map_err(|e| FunctionCallError::RespondToModel(format!("Spawn failed: {e}")))?;
 
-    let stdout = child.stdout.take().ok_or_else(|| {
-        FunctionCallError::RespondToModel("Failed to capture stdout".into())
-    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| FunctionCallError::RespondToModel("Failed to capture stdout".into()))?;
 
     // P0-2: Take stderr so we can drain it
     let stderr = child.stderr.take();
@@ -308,11 +321,7 @@ async fn start_monitor(
 }
 
 // P0-2: Drain stderr to prevent pipe buffer deadlock
-async fn drain_stderr(
-    cancel: CancellationToken,
-    stderr: tokio::process::ChildStderr,
-    name: &str,
-) {
+async fn drain_stderr(cancel: CancellationToken, stderr: tokio::process::ChildStderr, name: &str) {
     let mut buf = vec![0u8; 1024];
     let mut stderr = stderr;
     let mut total = 0usize;
@@ -422,7 +431,12 @@ async fn stdout_reader_loop(
     }
 }
 
-async fn send_exit_event(state: &MonitorState, name: &str, instance_id: InstanceId, exit_code: i32) {
+async fn send_exit_event(
+    state: &MonitorState,
+    name: &str,
+    instance_id: InstanceId,
+    exit_code: i32,
+) {
     let mut monitors = state.monitors.lock().await;
     let should_remove = monitors
         .get(name)
@@ -477,9 +491,7 @@ async fn stop_monitor(
     }
 }
 
-async fn list_monitors(
-    state: Arc<MonitorState>,
-) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
+async fn list_monitors(state: Arc<MonitorState>) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
     let monitors = state.monitors.lock().await;
     let list: Vec<_> = monitors
         .values()
