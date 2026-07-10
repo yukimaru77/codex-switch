@@ -246,6 +246,9 @@ async fn prompt_tools_are_consistent_across_requests(
     expected_tools_names.extend([
         "request_user_input",
         "apply_patch",
+        "env_switch",
+        "env_status",
+        "env_list",
         "view_image",
         "tool_search",
         "web_search",

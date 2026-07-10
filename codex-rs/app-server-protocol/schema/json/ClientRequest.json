@@ -4518,6 +4518,21 @@
       ],
       "type": "object"
     },
+    "ThreadMonitorEventParams": {
+      "properties": {
+        "event": {
+          "description": "Serialized `codex_protocol::protocol::MonitorEvent`."
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "threadId"
+      ],
+      "type": "object"
+    },
     "ThreadReadParams": {
       "properties": {
         "includeTurns": {
@@ -6104,6 +6119,30 @@
         "params"
       ],
       "title": "Thread/approveGuardianDeniedActionRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "thread/monitorEvent"
+          ],
+          "title": "Thread/monitorEventRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadMonitorEventParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Thread/monitorEventRequest",
       "type": "object"
     },
     {
