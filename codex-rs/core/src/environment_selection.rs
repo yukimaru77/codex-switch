@@ -78,6 +78,10 @@ impl StartingTurnEnvironment {
     pub(crate) async fn wait_until_ready(&self) -> Result<(), Arc<ExecServerError>> {
         self.resolution.clone().await.map(|_| ())
     }
+
+    pub(crate) fn resolved(&self) -> Option<Result<TurnEnvironment, Arc<ExecServerError>>> {
+        self.resolution.clone().now_or_never()
+    }
 }
 
 pub(crate) struct ThreadEnvironments {
