@@ -57,6 +57,29 @@ fn test_sync_tool_matches_expected_spec() {
                             "Delay before any other action. Defaults to no delay.".to_string(),
                         )),
                     ),
+                    (
+                        "touch_path".to_string(),
+                        JsonSchema::string(Some(
+                            "Path to create after the barrier opens. Used by integration tests."
+                                .to_string(),
+                        )),
+                    ),
+                    (
+                        "wait_for_paths".to_string(),
+                        JsonSchema::array(
+                            JsonSchema::string(Some(
+                                "Path that must exist before the tool completes.".to_string(),
+                            )),
+                            Some("Paths that must exist before the tool completes.".to_string()),
+                        ),
+                    ),
+                    (
+                        "wait_timeout_ms".to_string(),
+                        JsonSchema::number(Some(
+                            "Maximum wait_for_paths wait in milliseconds. Defaults to 1000."
+                                .to_string(),
+                        )),
+                    ),
                 ]), /*required*/ None, Some(false.into())),
             output_schema: None,
         })

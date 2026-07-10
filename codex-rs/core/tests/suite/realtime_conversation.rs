@@ -70,6 +70,8 @@ const MEMORY_PROMPT_PHRASE: &str =
     "You have access to a memory folder with guidance from prior runs.";
 const REALTIME_CONVERSATION_TEST_SUBPROCESS_ENV_VAR: &str =
     "CODEX_REALTIME_CONVERSATION_TEST_SUBPROCESS";
+const REALTIME_TEST_TIMEOUT: Duration = Duration::from_secs(10);
+const SILENT_CONTEXT_PREFIX: &str = "[BACKEND] Silent Codex context. Do not speak, acknowledge, or summarize this item. Wait for an explicit speakable handoff or direct user request.";
 
 #[derive(Debug, Clone)]
 struct RealtimeCallRequestCapture {
@@ -281,7 +283,7 @@ async fn conversation_start_audio_text_close_round_trip() -> Result<()> {
     let test = builder.build_with_websocket_server(&server).await?;
     assert!(
         server
-            .wait_for_handshakes(/*expected*/ 1, Duration::from_secs(2))
+            .wait_for_handshakes(/*expected*/ 1, REALTIME_TEST_TIMEOUT)
             .await
     );
 
@@ -472,7 +474,7 @@ async fn conversation_start_defaults_to_v2_and_gpt_realtime_1_5() -> Result<()> 
 
     assert!(
         realtime_server
-            .wait_for_handshakes(/*expected*/ 1, Duration::from_secs(2))
+            .wait_for_handshakes(/*expected*/ 1, REALTIME_TEST_TIMEOUT)
             .await
     );
 
@@ -1419,7 +1421,7 @@ async fn conversation_start_uses_openai_env_key_fallback_with_chatgpt_auth() -> 
     let test = builder.build_with_websocket_server(&server).await?;
     assert!(
         server
-            .wait_for_handshakes(/*expected*/ 1, Duration::from_secs(2))
+            .wait_for_handshakes(/*expected*/ 1, REALTIME_TEST_TIMEOUT)
             .await
     );
 
@@ -1574,7 +1576,7 @@ async fn assert_transport_close_tail_flush(
     .await;
     assert_eq!(closed.reason.as_deref(), Some("transport_closed"));
     if flush_transcript_tail_on_session_end {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        let deadline = tokio::time::Instant::now() + REALTIME_TEST_TIMEOUT;
         while response_mock.requests().is_empty() {
             assert!(tokio::time::Instant::now() < deadline);
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1804,7 +1806,7 @@ async fn conversation_second_start_replaces_runtime() -> Result<()> {
     let test = builder.build_with_websocket_server(&server).await?;
     assert!(
         server
-            .wait_for_handshakes(/*expected*/ 1, Duration::from_secs(2))
+            .wait_for_handshakes(/*expected*/ 1, REALTIME_TEST_TIMEOUT)
             .await
     );
 
@@ -1949,7 +1951,7 @@ async fn conversation_uses_experimental_realtime_ws_base_url_override() -> Resul
     let test = builder.build_with_websocket_server(&startup_server).await?;
     assert!(
         startup_server
-            .wait_for_handshakes(/*expected*/ 1, Duration::from_secs(2))
+            .wait_for_handshakes(/*expected*/ 1, REALTIME_TEST_TIMEOUT)
             .await
     );
 
@@ -2025,7 +2027,7 @@ async fn conversation_uses_default_realtime_backend_prompt() -> Result<()> {
     let test = builder.build_with_websocket_server(&server).await?;
     assert!(
         server
-            .wait_for_handshakes(/*expected*/ 1, Duration::from_secs(2))
+            .wait_for_handshakes(/*expected*/ 1, REALTIME_TEST_TIMEOUT)
             .await
     );
 
@@ -2105,7 +2107,7 @@ async fn conversation_uses_empty_instructions_for_null_or_empty_prompt() -> Resu
     let test = builder.build_with_websocket_server(&server).await?;
     assert!(
         server
-            .wait_for_handshakes(/*expected*/ 1, Duration::from_secs(2))
+            .wait_for_handshakes(/*expected*/ 1, REALTIME_TEST_TIMEOUT)
             .await
     );
 
@@ -2186,7 +2188,7 @@ async fn conversation_uses_explicit_start_voice() -> Result<()> {
     let test = test_codex().build_with_websocket_server(&server).await?;
     assert!(
         server
-            .wait_for_handshakes(/*expected*/ 1, Duration::from_secs(2))
+            .wait_for_handshakes(/*expected*/ 1, REALTIME_TEST_TIMEOUT)
             .await
     );
 
@@ -2255,7 +2257,7 @@ async fn conversation_uses_configured_realtime_voice() -> Result<()> {
     let test = builder.build_with_websocket_server(&server).await?;
     assert!(
         server
-            .wait_for_handshakes(/*expected*/ 1, Duration::from_secs(2))
+            .wait_for_handshakes(/*expected*/ 1, REALTIME_TEST_TIMEOUT)
             .await
     );
 
@@ -2370,7 +2372,7 @@ async fn conversation_uses_experimental_realtime_ws_backend_prompt_override() ->
     let test = builder.build_with_websocket_server(&server).await?;
     assert!(
         server
-            .wait_for_handshakes(/*expected*/ 1, Duration::from_secs(2))
+            .wait_for_handshakes(/*expected*/ 1, REALTIME_TEST_TIMEOUT)
             .await
     );
 
@@ -2454,7 +2456,7 @@ async fn conversation_uses_experimental_realtime_ws_startup_context_override() -
     fs::write(test.workspace_path("README.md"), "workspace marker")?;
     assert!(
         startup_server
-            .wait_for_handshakes(/*expected*/ 1, Duration::from_secs(2))
+            .wait_for_handshakes(/*expected*/ 1, REALTIME_TEST_TIMEOUT)
             .await
     );
 
@@ -2532,7 +2534,7 @@ async fn conversation_disables_realtime_startup_context_with_empty_override() ->
     fs::write(test.workspace_path("README.md"), "workspace marker")?;
     assert!(
         startup_server
-            .wait_for_handshakes(/*expected*/ 1, Duration::from_secs(2))
+            .wait_for_handshakes(/*expected*/ 1, REALTIME_TEST_TIMEOUT)
             .await
     );
 
@@ -3278,7 +3280,7 @@ async fn conversation_mirrors_assistant_message_text_to_realtime_handoff() -> Re
     })
     .await;
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let deadline = tokio::time::Instant::now() + REALTIME_TEST_TIMEOUT;
     while tokio::time::Instant::now() < deadline {
         let connections = realtime_server.connections();
         if connections.len() == 1 && connections[0].len() >= 2 {

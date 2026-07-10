@@ -2289,13 +2289,9 @@ impl ThreadRequestProcessor {
         let event: codex_protocol::protocol::MonitorEvent = serde_json::from_value(event)
             .map_err(|err| invalid_request(format!("invalid MonitorEvent: {err}")))?;
         let (_, thread) = self.load_thread(&thread_id).await?;
-        self.submit_core_op(
-            request_id,
-            thread.as_ref(),
-            Op::MonitorEvent { event },
-        )
-        .await
-        .map_err(|err| internal_error(format!("failed to submit monitor event: {err}")))?;
+        self.submit_core_op(request_id, thread.as_ref(), Op::MonitorEvent { event })
+            .await
+            .map_err(|err| internal_error(format!("failed to submit monitor event: {err}")))?;
         Ok(ThreadMonitorEventResponse {})
     }
 

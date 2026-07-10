@@ -45,3 +45,4 @@ expression: commands
 /clear - clear the terminal and start a new chat
 /test-approval - test approval request
 /subagents - switch the active agent thread
+/monitor - start/stop a background monitor process

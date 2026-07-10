@@ -619,6 +619,30 @@
             },
             "method": {
               "enum": [
+                "thread/monitorEvent"
+              ],
+              "title": "Thread/monitorEventRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadMonitorEventParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/monitorEventRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/v2/RequestId"
+            },
+            "method": {
+              "enum": [
                 "thread/rollback"
               ],
               "title": "Thread/rollbackRequestMethod",
@@ -5762,6 +5786,26 @@
             "params"
           ],
           "title": "WindowsSandbox/setupCompletedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
+                "monitor/notification"
+              ],
+              "title": "Monitor/notificationNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/MonitorNotificationNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Monitor/notificationNotification",
           "type": "object"
         },
         {
@@ -14186,6 +14230,31 @@
         },
         "type": "object"
       },
+      "MonitorNotificationNotification": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "monitorName": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "monitorName",
+          "summary",
+          "threadId"
+        ],
+        "title": "MonitorNotificationNotification",
+        "type": "object"
+      },
       "MultiAgentMode": {
         "description": "Controls the effective multi-agent delegation instructions for a turn. `custom` means the configured mode hint defines the policy instead of a built-in policy.",
         "oneOf": [
@@ -20585,6 +20654,28 @@
           "thread"
         ],
         "title": "ThreadMetadataUpdateResponse",
+        "type": "object"
+      },
+      "ThreadMonitorEventParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "event": {
+            "description": "Serialized `codex_protocol::protocol::MonitorEvent`."
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "event",
+          "threadId"
+        ],
+        "title": "ThreadMonitorEventParams",
+        "type": "object"
+      },
+      "ThreadMonitorEventResponse": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "ThreadMonitorEventResponse",
         "type": "object"
       },
       "ThreadNameUpdatedNotification": {
