@@ -36,11 +36,18 @@ const MONITOR_START_TOOL: &str = "monitor_start";
 const MONITOR_STOP_TOOL: &str = "monitor_stop";
 const MONITOR_LIST_TOOL: &str = "monitor_list";
 
-const MAX_BATCH_LINES: usize = 100;
+const MAX_BATCH_LINES: usize = 500;
 const MAX_QUEUE_EVENTS: usize = 50;
 const MAX_STDERR_TAIL_BYTES: usize = 4096;
 const MAX_NAME_LEN: usize = 64;
+/// Quiet period after the most recent line before a batch is closed.
+/// Rolling (extended by every new line) so one burst of output — e.g. an
+/// agmsg poll tick printing several messages — lands in a single event
+/// instead of being split at an arbitrary fixed deadline.
 const BATCH_WINDOW_MS: u64 = 250;
+/// Hard cap on how long a batch may stay open from its first line, so a
+/// process that never stays quiet still delivers events promptly.
+const MAX_BATCH_WINDOW_MS: u64 = 2000;
 
 // P0-5: Instance ID to prevent ABA race on stop/start same name
 type InstanceId = u64;
@@ -265,7 +272,6 @@ async fn start_monitor(
     let cancel = CancellationToken::new();
     let cancel_clone = cancel.clone();
     let name = args.name.clone();
-    let state_clone = Arc::clone(&state);
 
     // P0-2: Spawn stderr drain task
     if let Some(stderr) = stderr {
@@ -282,24 +288,17 @@ async fn start_monitor(
     let cancel_reaper = cancel.clone();
     tokio::spawn({
         let state_for_reaper = Arc::clone(&state);
-        let name_for_reaper = name.clone();
         async move {
             // Main stdout reader loop
-            stdout_reader_loop(
-                &cancel_reaper,
-                stdout,
-                &name_for_reaper,
-                instance_id,
-                &state_for_reaper,
-            )
-            .await;
+            stdout_reader_loop(&cancel_reaper, stdout, &name, instance_id, &state_for_reaper)
+                .await;
 
             // Wait for child to exit properly, then send lifecycle event
             let exit_code = match child.wait().await {
                 Ok(status) => status.code().unwrap_or(-1),
                 Err(_) => -1,
             };
-            send_exit_event(&state_for_reaper, &name_for_reaper, instance_id, exit_code).await;
+            send_exit_event(&state_for_reaper, &name, instance_id, exit_code).await;
         }
     });
 
@@ -365,6 +364,7 @@ async fn stdout_reader_loop(
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
     let batch_window = tokio::time::Duration::from_millis(BATCH_WINDOW_MS);
+    let max_batch_window = tokio::time::Duration::from_millis(MAX_BATCH_WINDOW_MS);
 
     loop {
         let mut batch: Vec<String> = Vec::new();
@@ -374,15 +374,20 @@ async fn stdout_reader_loop(
                 match result {
                     Ok(Some(line)) => {
                         batch.push(line);
-                        let deadline = tokio::time::Instant::now() + batch_window;
+                        let hard_deadline = tokio::time::Instant::now() + max_batch_window;
+                        let mut quiet_deadline = tokio::time::Instant::now() + batch_window;
                         // P1-2: Limit batch size for backpressure
                         while batch.len() < MAX_BATCH_LINES {
+                            let deadline = quiet_deadline.min(hard_deadline);
                             tokio::select! {
                                 _ = cancel.cancelled() => break,
                                 _ = tokio::time::sleep_until(deadline) => break,
                                 r = lines.next_line() => {
                                     match r {
-                                        Ok(Some(l)) => batch.push(l),
+                                        Ok(Some(l)) => {
+                                            batch.push(l);
+                                            quiet_deadline = tokio::time::Instant::now() + batch_window;
+                                        }
                                         _ => break,
                                     }
                                 }
@@ -437,15 +442,16 @@ async fn send_exit_event(
     instance_id: InstanceId,
     exit_code: i32,
 ) {
-    let mut monitors = state.monitors.lock().await;
-    let should_remove = monitors
-        .get(name)
-        .is_some_and(|h| h.instance_id == instance_id);
-    if !should_remove {
-        return;
+    {
+        let mut monitors = state.monitors.lock().await;
+        let should_remove = monitors
+            .get(name)
+            .is_some_and(|h| h.instance_id == instance_id);
+        if !should_remove {
+            return;
+        }
+        monitors.remove(name);
     }
-    monitors.remove(name);
-    drop(monitors);
 
     let s = state.seq.fetch_add(1, Ordering::Relaxed);
     let kind = if exit_code == 0 {
