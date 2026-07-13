@@ -113,7 +113,6 @@ impl ExecCommandHandler {
         let ToolInvocation {
             session,
             turn,
-            step_context,
             tracker,
             call_id,
             payload,
