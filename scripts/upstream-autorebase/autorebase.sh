@@ -29,10 +29,12 @@ AGENT_TIMEOUT="${AUTOREBASE_AGENT_TIMEOUT_SECONDS:-10800}"
 PROMPT_TEMPLATE="${AUTOREBASE_PROMPT_TEMPLATE:-$SCRIPT_DIR/repair-prompt-template.txt}"
 AGENT_CMD="${AUTOREBASE_AGENT_CMD:-codex exec --dangerously-bypass-approvals-and-sandbox}"
 FORCE="${AUTOREBASE_FORCE:-0}"
+MIN_FREE_KB="${AUTOREBASE_MIN_FREE_KB:-20971520}"
 
 # Share one cargo target dir across versions so unattended runs don't
 # rebuild the world (or fill the disk) for every worktree.
 export CARGO_TARGET_DIR="${AUTOREBASE_CARGO_TARGET_DIR:-$STATE_DIR/target-cache}"
+export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 export RUST_MIN_STACK=8388608
 
 DRY_RUN=0
@@ -78,6 +80,9 @@ cd "$REPO_DIR"
 for cmd in git jq curl cargo; do
     command -v "$cmd" >/dev/null 2>&1 || die "required command not found: $cmd"
 done
+case "$MIN_FREE_KB" in
+    ''|*[!0-9]*) die "AUTOREBASE_MIN_FREE_KB must be a non-negative integer" ;;
+esac
 
 if ! git remote get-url "$UPSTREAM_REMOTE" >/dev/null 2>&1; then
     git remote add "$UPSTREAM_REMOTE" "https://github.com/${UPSTREAM_REPO}.git"
@@ -223,13 +228,41 @@ if [ "$NEEDS_REBASE" = "1" ]; then
 fi
 
 # ----------------------------------------------------------- verification
+ensure_build_space() {
+    mkdir -p "$CARGO_TARGET_DIR"
+    _available_kb="$(df -Pk "$CARGO_TARGET_DIR" | awk 'NR == 2 { print $4 }')"
+    case "$_available_kb" in
+        ''|*[!0-9]*)
+            log "WARNING: could not determine free space for $CARGO_TARGET_DIR"
+            return 0
+            ;;
+    esac
+    if [ "$_available_kb" -lt "$MIN_FREE_KB" ]; then
+        log "Only ${_available_kb} KiB free; cleaning shared cargo target $CARGO_TARGET_DIR"
+        cargo clean --target-dir "$CARGO_TARGET_DIR" || return 1
+    fi
+}
+
 verify() {
     # verify <logfile>; returns 0 when build + tests pass
     _vlog="$1"
     : > "$_vlog"
+    if ! ensure_build_space >> "$_vlog" 2>&1; then
+        log "Cargo target cleanup FAILED (see $_vlog)"
+        return 1
+    fi
     log "Verify: cargo build --bin codex"
     if ! (cd "$WT/codex-rs" && cargo build --bin codex) >> "$_vlog" 2>&1; then
         log "Build FAILED (see $_vlog)"
+        return 1
+    fi
+    # Core integration tests resolve this helper through the shared target
+    # directory, but cargo does not build it when codex-rmcp-client is outside
+    # the package filter computed from the feature diff.
+    log "Verify: cargo build -p codex-rmcp-client --bin test_stdio_server"
+    if ! (cd "$WT/codex-rs" && \
+            cargo build -p codex-rmcp-client --bin test_stdio_server) >> "$_vlog" 2>&1; then
+        log "Test helper build FAILED (see $_vlog)"
         return 1
     fi
     if command -v cargo-nextest >/dev/null 2>&1 || cargo nextest --version >/dev/null 2>&1; then

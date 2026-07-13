@@ -13,8 +13,8 @@ launchd (6時間ごと)
        3. 専用 worktree を作成(メインの checkout には一切触らない)
           ../codex-autorebase-worktrees/env-switch-monitor-v<NEW>
        4. git rebase --onto rust-v<NEW> rust-v<OLD> で追加機能コミットを載せ替え
-       5. cargo build --bin codex + cargo nextest run(追加機能が触っている
-          クレートを diff から自動算出してスコープ)
+       5. cargo build --bin codex + 統合テスト用 MCP stdio helper の事前ビルド +
+          cargo nextest run(追加機能が触っているクレートを diff から自動算出してスコープ)
        6. 失敗した場合:
           - rebase コンフリクト → worktree を rust-v<NEW> にリセットし、
             旧差分 (rust-v<OLD>..env-switch-monitor-v<OLD>) を提示して
@@ -33,7 +33,7 @@ launchd (6時間ごと)
 
 - `state.jsonl` — 各バージョンの処理履歴(started / rebased / repaired / pushed / failed …)
 - `logs/run-*.log` — 実行ログ、`logs/verify-*.log` — build/test 失敗ログ、`logs/agent-*.log` — エージェントの出力
-- `target-cache/` — worktree 間で共有する cargo target(毎回のフルビルド回避)
+- `target-cache/` — worktree 間で共有する cargo target(毎回のフルビルド回避)。検証前の空き容量が既定 20 GiB 未満なら自動的に clean される
 
 ## セットアップ
 
@@ -67,6 +67,9 @@ scripts/upstream-autorebase/install-scheduler.sh --uninstall
 | `AUTOREBASE_MAX_RUNS_PER_VERSION` | `2` | 同一バージョンで failed になった後の自動再実行上限 |
 | `AUTOREBASE_AGENT_TIMEOUT_SECONDS` | `10800` | エージェント 1 回の実行タイムアウト(3h) |
 | `AUTOREBASE_WORKTREE_ROOT` | `../codex-autorebase-worktrees` | worktree の置き場所 |
+| `AUTOREBASE_CARGO_TARGET_DIR` | `.upstream-autorebase/target-cache` | worktree 間で共有する cargo target |
+| `AUTOREBASE_MIN_FREE_KB` | `20971520` | 検証前に共有 cargo target を clean する空き容量の下限(KiB) |
+| `CARGO_INCREMENTAL` | `0` | 共有 target の incremental artifact 蓄積を抑止。明示指定時はその値を使用 |
 | `AUTOREBASE_INTERVAL_SECONDS` | `21600` | (installer 用)ポーリング間隔 |
 | `AUTOREBASE_FORCE` | `0` | `1` で失敗上限を無視して再実行 |
 
