@@ -37,7 +37,6 @@ use crate::local_file_system::LocalFileSystem;
 use crate::local_process::LocalProcess;
 use crate::process::ExecBackend;
 use crate::protocol::EnvironmentInfo;
-use crate::protocol::ShellInfo;
 use crate::provision::RemoteLauncher;
 use crate::remote::NoiseRendezvousEnvironmentConfig;
 use crate::remote_file_system::RemoteFileSystem;

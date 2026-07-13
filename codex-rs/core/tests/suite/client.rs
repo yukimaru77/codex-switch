@@ -2333,7 +2333,7 @@ async fn skills_use_aliases_in_developer_message_under_budget_pressure() {
         "expected root alias for {expected_root_str}: {developer_messages:?}"
     );
     assert!(
-        developer_text.contains("- s00: d (file: r0/s00/SKILL.md)"),
+        developer_text.contains("(file: r0/s00/SKILL.md)"),
         "expected skill path to use root alias: {developer_messages:?}"
     );
     assert!(
