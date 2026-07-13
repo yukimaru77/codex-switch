@@ -1,5 +1,4 @@
 use codex_features::Feature;
-use codex_protocol::ThreadId;
 use codex_protocol::models::ShellCommandToolCallParams;
 use codex_tools::ShellCommandBackendConfig;
 use codex_tools::ToolName;
@@ -184,7 +183,6 @@ impl ShellCommandHandler {
         let ToolInvocation {
             session,
             turn,
-            step_context,
             cancellation_token,
             tracker,
             call_id,
@@ -266,7 +264,6 @@ impl ShellCommandHandler {
             advisory,
             session,
             turn,
-            turn_environment,
             tracker,
             call_id,
             shell_runtime_backend: self.shell_runtime_backend(),
