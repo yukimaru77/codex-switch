@@ -474,7 +474,6 @@ impl ApplyPatchHandler {
         let ToolInvocation {
             session,
             turn,
-            step_context,
             tracker,
             call_id,
             tool_name,

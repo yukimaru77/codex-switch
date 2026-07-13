@@ -1,6 +1,5 @@
 use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_features::Feature;
-use codex_protocol::ThreadId;
 use codex_protocol::models::ShellCommandToolCallParams;
 use codex_tools::ShellCommandBackendConfig;
 use codex_tools::ToolName;
@@ -197,7 +196,6 @@ impl ShellCommandHandler {
         let ToolInvocation {
             session,
             turn,
-            step_context,
             cancellation_token,
             tracker,
             call_id,

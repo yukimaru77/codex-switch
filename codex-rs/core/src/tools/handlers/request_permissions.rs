@@ -52,6 +52,7 @@ impl RequestPermissionsHandler {
             payload,
             ..
         } = invocation;
+        let turn = &step_context.turn;
 
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,
