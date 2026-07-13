@@ -47,7 +47,6 @@ impl RequestPermissionsHandler {
         let ToolInvocation {
             session,
             turn,
-            step_context,
             cancellation_token,
             call_id,
             payload,
