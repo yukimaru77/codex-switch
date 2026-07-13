@@ -1,6 +1,5 @@
 use super::connection_handling_websocket::DEFAULT_READ_TIMEOUT;
 use super::connection_handling_websocket::WsClient;
-use super::connection_handling_websocket::assert_no_message;
 use super::connection_handling_websocket::connect_websocket;
 use super::connection_handling_websocket::create_config_toml;
 use super::connection_handling_websocket::read_notification_for_method;
@@ -82,8 +81,18 @@ async fn thread_name_updated_broadcasts_for_loaded_threads() -> Result<()> {
         assert_thread_name_updated(ws2_notification, &conversation_id, renamed)?;
         assert_legacy_thread_name(codex_home.path(), &conversation_id, renamed).await?;
 
-        assert_no_message(&mut ws1, Duration::from_millis(250)).await?;
-        assert_no_message(&mut ws2, Duration::from_millis(250)).await?;
+        assert_no_notification_for_method(
+            &mut ws1,
+            "thread/name/updated",
+            Duration::from_millis(250),
+        )
+        .await?;
+        assert_no_notification_for_method(
+            &mut ws2,
+            "thread/name/updated",
+            Duration::from_millis(250),
+        )
+        .await?;
         Ok(())
     }
     .await;
@@ -134,8 +143,18 @@ async fn thread_name_updated_broadcasts_for_not_loaded_threads() -> Result<()> {
         assert_thread_name_updated(ws2_notification, &conversation_id, renamed)?;
         assert_legacy_thread_name(codex_home.path(), &conversation_id, renamed).await?;
 
-        assert_no_message(&mut ws1, Duration::from_millis(250)).await?;
-        assert_no_message(&mut ws2, Duration::from_millis(250)).await?;
+        assert_no_notification_for_method(
+            &mut ws1,
+            "thread/name/updated",
+            Duration::from_millis(250),
+        )
+        .await?;
+        assert_no_notification_for_method(
+            &mut ws2,
+            "thread/name/updated",
+            Duration::from_millis(250),
+        )
+        .await?;
         Ok(())
     }
     .await;
@@ -154,6 +173,18 @@ async fn initialize_both_clients(ws1: &mut WsClient, ws2: &mut WsClient) -> Resu
     send_initialize_request(ws2, /*id*/ 2, "ws_client_two").await?;
     timeout(DEFAULT_READ_TIMEOUT, read_response_for_id(ws2, /*id*/ 2)).await??;
     Ok(())
+}
+
+async fn assert_no_notification_for_method(
+    stream: &mut WsClient,
+    method: &str,
+    wait_for: Duration,
+) -> Result<()> {
+    match timeout(wait_for, read_notification_for_method(stream, method)).await {
+        Ok(Ok(_)) => anyhow::bail!("unexpected duplicate notification for method `{method}`"),
+        Ok(Err(err)) => Err(err),
+        Err(_) => Ok(()),
+    }
 }
 
 fn create_rollout(codex_home: &std::path::Path, filename_ts: &str) -> Result<String> {

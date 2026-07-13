@@ -270,7 +270,6 @@ async fn start_monitor(
     let instance_id = state.instance_counter.fetch_add(1, Ordering::Relaxed);
 
     let cancel = CancellationToken::new();
-    let cancel_clone = cancel.clone();
     let name = args.name.clone();
 
     // P0-2: Spawn stderr drain task
@@ -290,8 +289,14 @@ async fn start_monitor(
         let state_for_reaper = Arc::clone(&state);
         async move {
             // Main stdout reader loop
-            stdout_reader_loop(&cancel_reaper, stdout, &name, instance_id, &state_for_reaper)
-                .await;
+            stdout_reader_loop(
+                &cancel_reaper,
+                stdout,
+                &name,
+                instance_id,
+                &state_for_reaper,
+            )
+            .await;
 
             // Wait for child to exit properly, then send lifecycle event
             let exit_code = match child.wait().await {

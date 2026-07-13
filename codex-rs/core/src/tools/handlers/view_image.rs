@@ -105,7 +105,6 @@ impl ViewImageHandler {
         let ToolInvocation {
             session,
             turn,
-            step_context,
             payload,
             call_id,
             ..
