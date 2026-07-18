@@ -48,3 +48,14 @@ log "Installed codex $VERSION"
 log "  binaries: $DEST"
 log "  symlinks: $LINK_DIR ($BINARIES)"
 log "Rollback: repoint the symlinks at a previous dir under $BASE_DIR"
+
+# Retention: keep only the newest N versioned dirs (each is several hundred
+# MB; unbounded growth eventually fills the disk and breaks the next build).
+# Newest-first by mtime; `tail -n +K` is POSIX so this works with BSD tools.
+KEEP="${CODEX_INSTALL_KEEP:-3}"
+ls -1t "$BASE_DIR" | grep '^additional-features-' | tail -n +"$((KEEP + 1))" \
+    | while read -r old; do
+        [ -n "$old" ] || continue
+        log "Pruning old install: $old"
+        rm -rf "${BASE_DIR:?}/$old"
+    done
