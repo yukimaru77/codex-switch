@@ -32,7 +32,7 @@ FORCE="${AUTOREBASE_FORCE:-0}"
 MIN_FREE_KB="${AUTOREBASE_MIN_FREE_KB:-20971520}"
 
 # Share one cargo target dir across versions so unattended runs don't
-# rebuild the world (or fill the disk) for every worktree.
+# rebuild the world for every worktree.
 export CARGO_TARGET_DIR="${AUTOREBASE_CARGO_TARGET_DIR:-$STATE_DIR/target-cache}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 export RUST_MIN_STACK=8388608
@@ -41,6 +41,18 @@ DRY_RUN=0
 case "${1:-}" in
     --dry-run|check) DRY_RUN=1 ;;
 esac
+
+# Cargo never garbage-collects the cache, so unbounded growth eventually
+# fills the disk mid-build (observed at 85GB). Wipe it when it exceeds the
+# cap; the next build repays one cold compile instead of failing.
+TARGET_CACHE_MAX_GB="${AUTOREBASE_TARGET_CACHE_MAX_GB:-60}"
+if [ "$DRY_RUN" = "0" ] && [ -d "$CARGO_TARGET_DIR" ]; then
+    cache_gb="$(du -sg "$CARGO_TARGET_DIR" 2>/dev/null | awk '{print $1}')"
+    if [ -n "$cache_gb" ] && [ "$cache_gb" -gt "$TARGET_CACHE_MAX_GB" ]; then
+        echo "target-cache is ${cache_gb}GB (> ${TARGET_CACHE_MAX_GB}GB cap); wiping it"
+        rm -rf "$CARGO_TARGET_DIR"
+    fi
+fi
 
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 RUN_LOG="$LOG_DIR/run-$(date '+%Y%m%d-%H%M%S').log"
