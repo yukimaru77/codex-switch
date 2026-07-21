@@ -438,6 +438,23 @@ impl Session {
         })
     }
 
+    /// Detached, type-erased variant of [`Self::maybe_start_turn_for_pending_work`]
+    /// for callers that run inside the spawned task body (e.g. on_task_finished).
+    /// Awaiting the wake there would make the caller's async state machine
+    /// reference start_task's concrete future type — a self-referential type on
+    /// which the Send auto-trait proof cannot be discharged. Erasing the future
+    /// behind `dyn Future` in this non-async fn keeps that proof local and
+    /// acyclic; the wake itself is guarded (pending work + idle checks), so
+    /// running it detached is safe.
+    pub(crate) fn maybe_start_turn_for_pending_work_detached(self: &Arc<Self>) {
+        let sess = Arc::clone(self);
+        let wake: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+            Box::pin(async move {
+                sess.maybe_start_turn_for_pending_work().await;
+            });
+        tokio::spawn(wake);
+    }
+
     /// Starts a regular turn with the provided sub-id when pending work should wake an idle
     /// session.
     ///
