@@ -440,23 +440,6 @@ impl Session {
         })
     }
 
-    /// Detached, type-erased variant of [`Self::maybe_start_turn_for_pending_work`]
-    /// for callers that run inside the spawned task body (e.g. on_task_finished).
-    /// Awaiting the wake there would make the caller's async state machine
-    /// reference start_task's concrete future type — a self-referential type on
-    /// which the Send auto-trait proof cannot be discharged. Erasing the future
-    /// behind `dyn Future` in this non-async fn keeps that proof local and
-    /// acyclic; the wake itself is guarded (pending work + idle checks), so
-    /// running it detached is safe.
-    pub(crate) fn maybe_start_turn_for_pending_work_detached(self: &Arc<Self>) {
-        let sess = Arc::clone(self);
-        let wake: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
-            Box::pin(async move {
-                sess.maybe_start_turn_for_pending_work().await;
-            });
-        tokio::spawn(wake);
-    }
-
     /// Starts a regular turn with the provided sub-id when pending work should wake an idle
     /// session.
     ///
@@ -829,21 +812,6 @@ impl Session {
             }
         };
         if cleared_active_turn {
-            // P0-3: Wake for monitor/mailbox events that arrived during the turn
-            // close boundary. Their own wake attempt (in the monitor_event /
-            // mailbox handlers) saw active_turn as Some and gave up silently, and
-            // emit_thread_idle_lifecycle_if_idle only *suppresses* the idle
-            // notification when trigger-turn items are pending — it never starts
-            // a turn. Without this call such events strand in the queue until the
-            // next unrelated event happens to arrive while the session is idle
-            // (observed in the field as multi-hour silent delivery stalls).
-            //
-            // Detached (see maybe_start_turn_for_pending_work_detached for why
-            // this must not be awaited here). Ordering vs
-            // emit_thread_idle_lifecycle_if_idle is benign: that check
-            // independently suppresses the idle notification whenever
-            // trigger-turn items are still pending.
-            self.maybe_start_turn_for_pending_work_detached();
             self.emit_thread_idle_lifecycle_if_idle().await;
         }
         // Regular items were flushed before this terminal event was appended; buffering

@@ -378,8 +378,7 @@ pub(crate) async fn resolve_tool_environment(
 
     if let Some(starting) = turn
         .environments
-        .starting
-        .iter()
+        .starting()
         .find(|environment| environment.selection.environment_id == env_id)
     {
         return match starting.resolved() {
@@ -423,8 +422,8 @@ pub(crate) fn default_tool_environment_id(session: &Session, turn: &TurnContext)
             .map(|environment| environment.environment_id.clone())
             .or_else(|| {
                 turn.environments
-                    .starting
-                    .first()
+                    .starting()
+                    .next()
                     .map(|environment| environment.selection.environment_id.clone())
             })
     })
@@ -488,6 +487,7 @@ pub(crate) fn environment_selections_with_default(
         TurnEnvironmentSelection {
             environment_id: default_environment_id,
             cwd: codex_utils_path_uri::PathUri::from_abs_path(&cwd),
+            workspace_roots: Vec::new(),
         },
     );
     selections
@@ -641,6 +641,7 @@ mod tests {
     use super::normalize_and_validate_additional_permissions;
     use super::permissions_are_preapproved;
     use super::resolve_tool_environment;
+    use crate::environment_selection::TurnEnvironmentState;
     use crate::sandboxing::SandboxPermissions;
     use crate::session::turn_context::TurnEnvironment;
     use codex_exec_server::Environment;
@@ -732,8 +733,8 @@ mod tests {
         let (session, mut turn) = crate::session::tests::make_session_and_context().await;
         let local = turn
             .environments
-            .turn_environments
-            .first()
+            .turn_environments()
+            .next()
             .expect("local turn environment")
             .clone();
         let remote = TurnEnvironment::new(
@@ -743,9 +744,13 @@ mod tests {
                     .expect("remote environment"),
             ),
             local.cwd().clone(),
+            local.workspace_roots().to_vec(),
             None,
         );
-        turn.environments.turn_environments = vec![remote, local];
+        turn.environments.environments = vec![
+            TurnEnvironmentState::Ready(remote),
+            TurnEnvironmentState::Ready(local),
+        ];
 
         let resolved = resolve_tool_environment(&session, &turn, Some(LOCAL_ENVIRONMENT_ID))
             .await
@@ -765,7 +770,7 @@ mod tests {
             .expect("primary environment")
             .cwd()
             .clone();
-        turn.environments.turn_environments = Vec::new();
+        turn.environments.environments = Vec::new();
 
         let resolved = resolve_tool_environment(&session, &turn, Some(LOCAL_ENVIRONMENT_ID))
             .await
@@ -877,8 +882,8 @@ mod tests {
             )
             .expect("seed remote environment");
         turn.environments
-            .turn_environments
-            .push(TurnEnvironment::new(
+            .environments
+            .push(TurnEnvironmentState::Ready(TurnEnvironment::new(
                 "ssh:mine".to_string(),
                 Arc::new(
                     Environment::create_for_tests(Some("ws://127.0.0.1:8765".to_string()))
@@ -887,8 +892,9 @@ mod tests {
                 AbsolutePathBuf::from_absolute_path("/old")
                     .expect("old cwd")
                     .into(),
+                Vec::new(),
                 None,
-            ));
+            )));
         manager.set_environment_metadata(
             "ssh:mine".to_string(),
             EnvironmentMetadata {

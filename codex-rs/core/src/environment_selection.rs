@@ -10,7 +10,6 @@ use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentConnectionState;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerError;
-use codex_exec_server::ExecutorFileSystem;
 use codex_protocol::protocol::EnvironmentConnectionEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
@@ -564,16 +563,16 @@ fn resolve_environment_selections(
         let shell = metadata
             .and_then(|metadata| metadata.shell)
             .map(|shell| crate::shell::shell_for_remote_path(std::path::Path::new(&shell)));
-        turn_environments.push(TurnEnvironment::new(
+        turn_environments.push(TurnEnvironmentState::Ready(TurnEnvironment::new(
             environment_id,
             environment,
             cwd,
+            selected_environment.workspace_roots.clone(),
             shell,
-        ));
+        )));
     }
     Ok(TurnEnvironmentSnapshot {
-        turn_environments,
-        starting: Vec::new(),
+        environments: turn_environments,
     })
 }
 
@@ -894,6 +893,7 @@ url = "ws://127.0.0.1:8765"
             &[TurnEnvironmentSelection {
                 environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
                 cwd: cwd_uri,
+                workspace_roots: Vec::new(),
             }],
         )
         .expect("remote environment should resolve");

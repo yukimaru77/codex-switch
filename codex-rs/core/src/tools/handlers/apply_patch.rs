@@ -421,10 +421,10 @@ async fn patch_verification_permissions(
 async fn patch_verification_sandbox(
     session: &Session,
     turn: &TurnContext,
-    environment_id: &str,
-    cwd: &PathUri,
+    turn_environment: &TurnEnvironment,
     file_paths: &[PathUri],
 ) -> Option<codex_exec_server::FileSystemSandboxContext> {
+    let environment_id = &turn_environment.environment_id;
     if approved_session_patch_permissions(session, environment_id, file_paths)
         .await
         .is_some()
@@ -433,7 +433,7 @@ async fn patch_verification_sandbox(
     }
     Some(turn.file_system_sandbox_context(
         patch_verification_permissions(session, environment_id, file_paths).await,
-        cwd,
+        turn_environment,
     ))
 }
 
@@ -497,8 +497,7 @@ impl ApplyPatchHandler {
         let sandbox = patch_verification_sandbox(
             session.as_ref(),
             turn.as_ref(),
-            &turn_environment.environment_id,
-            &cwd,
+            &turn_environment,
             &verification_paths,
         )
         .await;
@@ -606,8 +605,7 @@ pub(crate) async fn intercept_apply_patch(
     let sandbox = patch_verification_sandbox(
         session.as_ref(),
         turn.as_ref(),
-        &turn_environment.environment_id,
-        cwd,
+        &turn_environment,
         &[],
     )
     .await;

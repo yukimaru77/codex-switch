@@ -32,26 +32,18 @@ impl ChatWidget {
                 }
                 let name = parts[1].to_string();
                 let command = parts[2].to_string();
-                let monitor_manager = &self.monitor_manager;
+                let monitor_manager = self.monitor_manager.clone();
                 let event_sender = self.app_event_tx.clone();
                 let name_clone = name.clone();
                 let command_clone = command.clone();
 
-                tokio::spawn({
-                    let monitors = monitor_manager.monitors.clone();
-                    let seq_counter = monitor_manager.sequence_counter.clone();
-                    async move {
-                        let mgr = crate::monitor::MonitorManager {
-                            monitors,
-                            sequence_counter: seq_counter,
-                        };
-                        match mgr.start(name_clone, &command_clone, event_sender).await {
+                tokio::spawn(async move {
+                        match monitor_manager.start(name_clone, &command_clone, event_sender).await {
                             Ok(()) => {}
                             Err(e) => {
                                 tracing::warn!("monitor start failed: {e}");
                             }
                         }
-                    }
                 });
 
                 self.add_info_message(format!("Monitor '{}' started: {}", name, command), None);
@@ -62,14 +54,12 @@ impl ChatWidget {
                     return;
                 }
                 let name = parts[1].to_string();
-                let monitors = self.monitor_manager.monitors.clone();
+                let monitor_manager = self.monitor_manager.clone();
                 let name_for_task = name.clone();
 
                 tokio::spawn(async move {
-                    let mut monitors = monitors.lock().await;
-                    if let Some(mut handle) = monitors.remove(&name_for_task) {
-                        handle.cancel.cancel();
-                        let _ = handle.child.kill().await;
+                    if let Err(err) = monitor_manager.stop(&name_for_task).await {
+                        tracing::warn!("monitor stop failed: {err}");
                     }
                 });
 
