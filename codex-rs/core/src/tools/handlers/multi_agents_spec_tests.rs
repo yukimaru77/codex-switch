@@ -194,6 +194,7 @@ fn spawn_agent_tool_v1_guides_remote_docker_delegation_without_raw_wrappers() {
         agent_type_description: "role help".to_string(),
         hide_agent_type_model_reasoning: false,
         usage_hint_text: None,
+        ..Default::default()
     });
 
     let ToolSpec::Namespace(namespace) = tool else {

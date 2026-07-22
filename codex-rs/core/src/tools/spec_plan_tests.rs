@@ -15,6 +15,8 @@ use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ToolMode;
 use codex_protocol::openai_models::WebSearchToolType;
+use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::SubAgentSource;
 use codex_tools::DiscoverablePluginInfo;
 use codex_tools::DiscoverableTool;
 use codex_tools::ResponsesApiNamespaceTool;
@@ -878,7 +880,7 @@ async fn env_switch_feature_registers_environment_status_tools() {
         set_feature(turn, Feature::ShellTool, /*enabled*/ true);
         set_feature(turn, Feature::UnifiedExec, /*enabled*/ true);
         set_feature(turn, Feature::EnvSwitch, /*enabled*/ true);
-        turn.environments.turn_environments.clear();
+        turn.environments.environments.clear();
     })
     .await;
     no_environment.assert_visible_lacks(&["env_switch", "env_status", "env_list"]);
@@ -913,13 +915,12 @@ async fn env_switch_feature_is_hidden_without_unified_exec() {
 }
 
 #[tokio::test]
-async fn host_context_gates_agent_job_tools() {
+async fn removed_agent_job_tools_stay_hidden_for_normal_and_worker_sources() {
     let normal_agent_job = probe(|turn| {
         set_feature(turn, Feature::SpawnCsv, /*enabled*/ true);
     })
     .await;
-    normal_agent_job.assert_visible_contains(&["spawn_agents_on_csv"]);
-    normal_agent_job.assert_visible_lacks(&["report_agent_job_result"]);
+    normal_agent_job.assert_visible_lacks(&["spawn_agents_on_csv", "report_agent_job_result"]);
 
     let worker_agent_job = probe(|turn| {
         set_feature(turn, Feature::SpawnCsv, /*enabled*/ true);
@@ -927,7 +928,7 @@ async fn host_context_gates_agent_job_tools() {
             SessionSource::SubAgent(SubAgentSource::Other("agent_job:42".to_string()));
     })
     .await;
-    worker_agent_job.assert_visible_contains(&["spawn_agents_on_csv", "report_agent_job_result"]);
+    worker_agent_job.assert_visible_lacks(&["spawn_agents_on_csv", "report_agent_job_result"]);
 }
 
 #[tokio::test]

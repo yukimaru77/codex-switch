@@ -162,8 +162,7 @@ fn implicit_base_launcher(session: &Session, turn: &TurnContext) -> Option<Remot
 
 fn base_environment_visible(session: &Session, turn: &TurnContext, environment_id: &str) -> bool {
     turn.environments
-        .turn_environments
-        .iter()
+        .turn_environments()
         .any(|environment| environment.environment_id == environment_id)
         || dynamic_environment_visible_to_thread(session, turn, environment_id)
 }

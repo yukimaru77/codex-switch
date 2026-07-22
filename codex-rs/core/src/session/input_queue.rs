@@ -302,9 +302,6 @@ impl InputQueue {
                 None => (false, true),
             }
         };
-        if has_turn_pending_input {
-            return true;
-        }
         // Monitor events always count as pending, even when mailbox
         // delivery is deferred to the next turn.
         if !self.monitor_pending_events.lock().await.is_empty() {
@@ -312,6 +309,9 @@ impl InputQueue {
         }
         if !accepts_mailbox_delivery {
             return false;
+        }
+        if has_turn_pending_input {
+            return true;
         }
         self.has_pending_mailbox_items().await
     }
@@ -504,7 +504,7 @@ mod tests {
         assert!(!input_queue.has_pending_mailbox_items().await);
 
         input_queue
-            .enqueue_monitor_event(make_monitor_event("test", "hello", false))
+            .enqueue_monitor_event(make_monitor_event("test", "hello", /*wake*/ false))
             .await;
         assert!(input_queue.has_pending_mailbox_items().await);
     }
@@ -515,7 +515,7 @@ mod tests {
         assert!(!input_queue.has_trigger_turn_mailbox_items().await);
 
         input_queue
-            .enqueue_monitor_event(make_monitor_event("test", "wake up", true))
+            .enqueue_monitor_event(make_monitor_event("test", "wake up", /*wake*/ true))
             .await;
         assert!(input_queue.has_trigger_turn_mailbox_items().await);
     }
@@ -525,7 +525,7 @@ mod tests {
         let input_queue = InputQueue::new();
 
         input_queue
-            .enqueue_monitor_event(make_monitor_event("test", "quiet", false))
+            .enqueue_monitor_event(make_monitor_event("test", "quiet", /*wake*/ false))
             .await;
         assert!(!input_queue.has_trigger_turn_mailbox_items().await);
         assert!(input_queue.has_pending_mailbox_items().await);
@@ -539,11 +539,11 @@ mod tests {
             AgentPath::root(),
             AgentPath::try_from("/root/worker").expect("agent path"),
             "mail",
-            false,
+            /*trigger_turn*/ false,
         );
         input_queue.enqueue_mailbox_communication(mail).await;
         input_queue
-            .enqueue_monitor_event(make_monitor_event("test", "event", false))
+            .enqueue_monitor_event(make_monitor_event("test", "event", /*wake*/ false))
             .await;
 
         let items = input_queue.drain_mailbox_input_items().await;
@@ -555,8 +555,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deferred_mailbox_suppresses_mail_but_not_monitor_events() {
+        let input_queue = InputQueue::new();
+        let active_turn = Mutex::new(Some(ActiveTurn::default()));
+        let turn_state = Arc::clone(
+            &active_turn
+                .lock()
+                .await
+                .as_ref()
+                .expect("active turn")
+                .turn_state,
+        );
+        turn_state
+            .lock()
+            .await
+            .set_mailbox_delivery_phase(MailboxDeliveryPhase::NextTurn);
+
+        input_queue
+            .enqueue_mailbox_communication(make_mail(
+                AgentPath::root(),
+                AgentPath::try_from("/root/worker").expect("agent path"),
+                "queued mail",
+                /*trigger_turn*/ false,
+            ))
+            .await;
+        assert!(!input_queue.has_pending_input(&active_turn).await);
+
+        input_queue
+            .enqueue_monitor_event(make_monitor_event("test", "event", /*wake*/ false))
+            .await;
+        assert!(input_queue.has_pending_input(&active_turn).await);
+    }
+
+    #[tokio::test]
     async fn monitor_event_converts_to_model_item() {
-        let event = make_monitor_event("test-watcher", "3 tests failed", true);
+        let event = make_monitor_event("test-watcher", "3 tests failed", /*wake*/ true);
         let item = event.to_model_input_item();
         let json = serde_json::to_string(&item).expect("serialize");
         assert!(json.contains("monitor:test-watcher"));
