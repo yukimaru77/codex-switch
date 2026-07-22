@@ -519,6 +519,7 @@ fn exec_command_tool_output_appends_advisory_after_output() {
         process_id: None,
         exit_code: Some(0),
         original_token_count: Some(2),
+        output_omitted_bytes: None,
         hook_command: None,
         advisory: Some("Advisory: use env_switch for continued work.".to_string()),
     }

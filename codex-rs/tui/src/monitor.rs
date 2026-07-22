@@ -20,15 +20,13 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 
 const MAX_BATCH_LINES: usize = 100;
-const MAX_STDERR_TAIL: usize = 4096;
 
 pub(crate) struct MonitorHandle {
-    pub(crate) name: String,
-    pub(crate) command_str: String,
     pub(crate) child: Child,
     pub(crate) cancel: CancellationToken,
 }
 
+#[derive(Clone)]
 pub(crate) struct MonitorManager {
     pub(crate) monitors: Arc<Mutex<HashMap<String, MonitorHandle>>>,
     pub(crate) sequence_counter: Arc<AtomicU64>,
@@ -189,12 +187,9 @@ impl MonitorManager {
             }
         });
 
-        let command_str = command.to_string();
         monitors.insert(
             name.clone(),
             MonitorHandle {
-                name,
-                command_str,
                 child,
                 cancel,
             },
@@ -213,19 +208,4 @@ impl MonitorManager {
         }
     }
 
-    pub async fn stop_all(&self) {
-        let mut monitors = self.monitors.lock().await;
-        for (_, mut handle) in monitors.drain() {
-            handle.cancel.cancel();
-            let _ = handle.child.kill().await;
-        }
-    }
-
-    pub async fn status(&self) -> Vec<(String, String)> {
-        let monitors = self.monitors.lock().await;
-        monitors
-            .iter()
-            .map(|(name, handle)| (name.clone(), handle.command_str.clone()))
-            .collect()
-    }
 }

@@ -26,7 +26,7 @@ pub fn detect_recent_cur_sessions(
         if !project_storage.is_dir() {
             continue;
         }
-        let fallback_cwd = cur_project_cwd(&project_storage);
+        let fallback_cwd = cur_project_cwd(&project_storage, codex_home);
         for path in cur_transcript_files(&project_storage.join("agent-transcripts")) {
             candidates.push(SessionFileCandidate {
                 path,
@@ -64,9 +64,34 @@ fn cur_transcript_files(transcripts_root: &Path) -> Vec<PathBuf> {
     files
 }
 
-fn cur_project_cwd(project_storage: &Path) -> Option<PathBuf> {
+fn cur_project_cwd(project_storage: &Path, codex_home: &Path) -> Option<PathBuf> {
     let encoded = project_storage.file_name()?.to_str()?;
-    decode_cur_project_path(encoded)
+    decode_cur_project_path_from_anchor(encoded, codex_home)
+        .or_else(|| decode_cur_project_path(encoded))
+}
+
+#[cfg(not(windows))]
+fn decode_cur_project_path_from_anchor(encoded: &str, anchor: &Path) -> Option<PathBuf> {
+    let root = Path::new("/");
+    let anchor_slug = cur_project_path_slug(anchor.strip_prefix(root).ok()?);
+    if anchor_slug == encoded {
+        return anchor.is_dir().then(|| anchor.to_path_buf());
+    }
+    if !encoded
+        .strip_prefix(&anchor_slug)
+        .is_some_and(|remaining| remaining.starts_with('-'))
+    {
+        return None;
+    }
+
+    let mut matches = Vec::new();
+    collect_cur_project_paths(encoded, anchor, root, /*depth*/ 0, &mut matches);
+    unique_path(matches)
+}
+
+#[cfg(windows)]
+fn decode_cur_project_path_from_anchor(_encoded: &str, _anchor: &Path) -> Option<PathBuf> {
+    None
 }
 
 #[cfg(not(windows))]
@@ -111,21 +136,22 @@ fn collect_cur_project_paths(
             break;
         }
         let candidate = entry.path();
-        if !candidate.is_dir() {
-            continue;
-        }
         let Ok(candidate_from_root) = candidate.strip_prefix(root) else {
             continue;
         };
         let candidate_slug = cur_project_path_slug(candidate_from_root);
-        if candidate_slug == encoded {
+        let is_match = candidate_slug == encoded;
+        let is_prefix = encoded
+            .strip_prefix(&candidate_slug)
+            .is_some_and(|remaining| remaining.starts_with('-'));
+        if (!is_match && !is_prefix) || !candidate.is_dir() {
+            continue;
+        }
+        if is_match {
             if !matches.contains(&candidate) {
                 matches.push(candidate);
             }
-        } else if encoded
-            .strip_prefix(&candidate_slug)
-            .is_some_and(|remaining| remaining.starts_with('-'))
-        {
+        } else {
             collect_cur_project_paths(encoded, &candidate, root, depth + 1, matches);
         }
     }
