@@ -308,6 +308,7 @@ async fn resume_lookup_model_providers_filters_only_last_lookup() {
         last: true,
         all: false,
         images: vec![],
+        compaction_scope: None,
         prompt: None,
     };
     let named_args = crate::cli::ResumeArgs {
@@ -315,6 +316,7 @@ async fn resume_lookup_model_providers_filters_only_last_lookup() {
         last: false,
         all: false,
         images: vec![],
+        compaction_scope: None,
         prompt: None,
     };
 
@@ -517,6 +519,33 @@ async fn thread_resume_params_only_include_explicit_review_policy_override() {
     assert_eq!(
         params_with_override.approvals_reviewer,
         Some(codex_app_server_protocol::ApprovalsReviewer::AutoReview)
+    );
+}
+
+#[tokio::test]
+async fn thread_resume_params_forward_compaction_scope() {
+    let codex_home = tempdir().expect("create temp codex home");
+    let cwd = tempdir().expect("create temp cwd");
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .harness_overrides(ConfigOverrides {
+            compaction_scope: Some(codex_core::config::CompactionScope::PostSessionStart),
+            ..Default::default()
+        })
+        .fallback_cwd(Some(cwd.path().to_path_buf()))
+        .build()
+        .await
+        .expect("build config with post-session-start compaction scope");
+
+    let params = thread_resume_params_from_config(
+        &config,
+        "thread-id".to_string(),
+        /*approvals_reviewer_override*/ None,
+    );
+
+    assert_eq!(
+        params.compaction_scope.as_deref(),
+        Some("post-session-start")
     );
 }
 

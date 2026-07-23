@@ -62,6 +62,26 @@ fn resume_accepts_output_flags_after_subcommand() {
 }
 
 #[test]
+fn resume_accepts_compaction_scope() {
+    let cli = Cli::parse_from([
+        "codex-exec",
+        "resume",
+        "--compaction-scope",
+        "post-session-start",
+        "session-123",
+        "continue",
+    ]);
+
+    let Some(Command::Resume(args)) = cli.command else {
+        panic!("expected resume command");
+    };
+    assert_eq!(
+        args.compaction_scope,
+        Some(codex_core::config::CompactionScope::PostSessionStart)
+    );
+}
+
+#[test]
 fn parses_config_isolation_flags() {
     let cli = Cli::parse_from([
         "codex-exec",

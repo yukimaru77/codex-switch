@@ -418,6 +418,10 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     } else {
         None // No model specified, will use the default.
     };
+    let compaction_scope = match command.as_ref() {
+        Some(ExecCommand::Resume(args)) => args.compaction_scope,
+        _ => None,
+    };
 
     let overrides = ConfigOverrides {
         model,
@@ -441,7 +445,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         developer_instructions: None,
         personality: None,
         compact_prompt: None,
-        compaction_scope: None,
+        compaction_scope,
         show_raw_agent_reasoning: oss.then_some(true),
         tools_web_search_request: None,
         ephemeral: ephemeral.then_some(true),
@@ -1111,6 +1115,7 @@ fn thread_resume_params_from_config(
         sandbox: sandbox.flatten(),
         permissions,
         config: thread_config_overrides_from_config(config),
+        compaction_scope: Some(config.compaction_scope.as_cli_value().to_string()),
         ..ThreadResumeParams::default()
     }
 }

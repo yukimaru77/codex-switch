@@ -2,6 +2,7 @@ use clap::Args;
 use clap::FromArgMatches;
 use clap::Parser;
 use clap::ValueEnum;
+use codex_core::config::CompactionScope;
 use codex_utils_cli::CliConfigOverrides;
 use codex_utils_cli::SharedCliOptions;
 use std::path::PathBuf;
@@ -198,6 +199,10 @@ struct ResumeArgsRaw {
     )]
     images: Vec<PathBuf>,
 
+    /// Select which history is eligible for compaction after resuming this session.
+    #[arg(long = "compaction-scope", value_enum, value_name = "SCOPE")]
+    compaction_scope: Option<CompactionScope>,
+
     /// Prompt to send after resuming the session. If `-` is used, read from stdin.
     #[arg(value_name = "PROMPT", value_hint = clap::ValueHint::Other)]
     prompt: Option<String>,
@@ -218,6 +223,9 @@ pub struct ResumeArgs {
     /// Optional image(s) to attach to the prompt sent after resuming.
     pub images: Vec<PathBuf>,
 
+    /// Select which history is eligible for compaction after resuming this session.
+    pub compaction_scope: Option<CompactionScope>,
+
     /// Prompt to send after resuming the session. If `-` is used, read from stdin.
     pub prompt: Option<String>,
 }
@@ -236,6 +244,7 @@ impl From<ResumeArgsRaw> for ResumeArgs {
             last: raw.last,
             all: raw.all,
             images: raw.images,
+            compaction_scope: raw.compaction_scope,
             prompt,
         }
     }
