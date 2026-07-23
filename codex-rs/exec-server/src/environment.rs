@@ -1189,8 +1189,8 @@ mod tests {
 
     use super::Environment;
     use super::EnvironmentManager;
-    use super::EnvironmentObservedStatus;
     use super::EnvironmentMetadata;
+    use super::EnvironmentObservedStatus;
     use super::LOCAL_ENVIRONMENT_ID;
     use super::REMOTE_ENVIRONMENT_ID;
     use super::noise_environment_config_from_values;

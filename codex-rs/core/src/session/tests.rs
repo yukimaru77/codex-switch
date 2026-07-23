@@ -2804,6 +2804,27 @@ async fn record_initial_history_reconstructs_forked_transcript() {
 }
 
 #[tokio::test]
+async fn record_initial_history_protects_forked_transcript_in_post_session_start_scope() {
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |config| {
+            config.compaction_scope = CompactionScope::PostSessionStart;
+        },
+    )
+    .await;
+    let (rollout_items, expected) = sample_rollout(&session, &turn_context).await;
+
+    session
+        .record_initial_history(InitialHistory::Forked(rollout_items))
+        .await;
+
+    let compaction = session.clone_history_for_compaction().await;
+    assert_eq!(compaction.protected_prefix, expected);
+    assert!(compaction.compactable_history.raw_items().is_empty());
+}
+
+#[tokio::test]
 async fn start_new_context_window_assigns_and_persists_item_ids() {
     let (mut session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
         CodexAuth::from_api_key("Test API Key"),

@@ -101,6 +101,11 @@ use serde::Deserialize;
 use tempfile::tempdir;
 
 use super::*;
+
+#[test]
+fn compaction_scope_defaults_to_full_history() {
+    assert_eq!(CompactionScope::default(), CompactionScope::FullHistory);
+}
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::TempDirExt;

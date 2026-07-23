@@ -20,9 +20,9 @@ use super::hop_from_arg;
 use super::implicit_base_launcher;
 use super::resolve_remote_cwd_script;
 use super::validate_addressing_mode;
+use crate::environment_selection::TurnEnvironmentState;
 use crate::tools::handlers::environment_thread_keys;
 use crate::tools::handlers::resolve_tool_environment;
-use crate::environment_selection::TurnEnvironmentState;
 
 // ---------------------------------------------------------------------------
 // Spec / arg-schema tests
@@ -876,16 +876,17 @@ async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot
         .environments
         .push(TurnEnvironmentState::Ready(
             crate::session::turn_context::TurnEnvironment::new(
-            "ssh:mine".to_string(),
-            environment,
-            AbsolutePathBuf::from_absolute_path("/old")
-                .expect("old cwd")
-                .into(),
-            Vec::new(),
-            Some(crate::shell::get_shell_by_model_provided_path(
-                &std::path::PathBuf::from("/bin/bash"),
-            )),
-        )));
+                "ssh:mine".to_string(),
+                environment,
+                AbsolutePathBuf::from_absolute_path("/old")
+                    .expect("old cwd")
+                    .into(),
+                Vec::new(),
+                Some(crate::shell::get_shell_by_model_provided_path(
+                    &std::path::PathBuf::from("/bin/bash"),
+                )),
+            ),
+        ));
     manager.set_thread_environment_metadata(
         thread_key.clone(),
         "ssh:mine".to_string(),

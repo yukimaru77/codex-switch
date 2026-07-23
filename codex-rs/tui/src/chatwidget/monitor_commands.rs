@@ -38,12 +38,15 @@ impl ChatWidget {
                 let command_clone = command.clone();
 
                 tokio::spawn(async move {
-                        match monitor_manager.start(name_clone, &command_clone, event_sender).await {
-                            Ok(()) => {}
-                            Err(e) => {
-                                tracing::warn!("monitor start failed: {e}");
-                            }
+                    match monitor_manager
+                        .start(name_clone, &command_clone, event_sender)
+                        .await
+                    {
+                        Ok(()) => {}
+                        Err(e) => {
+                            tracing::warn!("monitor start failed: {e}");
                         }
+                    }
                 });
 
                 self.add_info_message(format!("Monitor '{}' started: {}", name, command), None);

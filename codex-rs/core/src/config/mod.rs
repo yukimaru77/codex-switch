@@ -6,6 +6,7 @@ use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
 use crate::windows_sandbox::resolve_windows_sandbox_mode;
 use crate::windows_sandbox::resolve_windows_sandbox_private_desktop;
+use clap::ValueEnum;
 use codex_config::CloudConfigBundleLoader;
 use codex_config::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
@@ -127,6 +128,16 @@ use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+/// Selects which part of a resumed or forked session is eligible for compaction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum CompactionScope {
+    /// Preserve the traditional behavior: compact the entire active history.
+    #[default]
+    FullHistory,
+    /// Keep history loaded at session startup verbatim and compact only later history.
+    PostSessionStart,
+}
 
 use crate::config::permissions::BUILT_IN_READ_ONLY_PROFILE;
 use crate::config::permissions::BUILT_IN_WORKSPACE_PROFILE;
@@ -634,6 +645,9 @@ pub struct Config {
 
     /// Token usage threshold triggering auto-compaction of conversation history.
     pub model_auto_compact_token_limit: Option<i64>,
+
+    /// Selects the portion of history that compaction is allowed to replace.
+    pub compaction_scope: CompactionScope,
 
     /// Controls whether `model_auto_compact_token_limit` applies to the full
     /// active context or only tokens after the carried compaction-window prefix.
@@ -2449,6 +2463,7 @@ pub struct ConfigOverrides {
     pub developer_instructions: Option<String>,
     pub personality: Option<Personality>,
     pub compact_prompt: Option<String>,
+    pub compaction_scope: Option<CompactionScope>,
     pub show_raw_agent_reasoning: Option<bool>,
     pub tools_web_search_request: Option<bool>,
     pub ephemeral: Option<bool>,
@@ -3106,6 +3121,7 @@ impl Config {
             developer_instructions,
             personality,
             compact_prompt,
+            compaction_scope,
             show_raw_agent_reasoning,
             tools_web_search_request: override_tools_web_search_request,
             ephemeral,
@@ -3877,6 +3893,7 @@ impl Config {
             review_model,
             model_context_window: cfg.model_context_window,
             model_auto_compact_token_limit: cfg.model_auto_compact_token_limit,
+            compaction_scope: compaction_scope.unwrap_or_default(),
             model_auto_compact_token_limit_scope: cfg
                 .model_auto_compact_token_limit_scope
                 .unwrap_or_default(),

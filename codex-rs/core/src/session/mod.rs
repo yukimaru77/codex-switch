@@ -183,6 +183,7 @@ use crate::client::ModelClient;
 use crate::codex_thread::ThreadConfigSnapshot;
 #[cfg(test)]
 use crate::compact::collect_user_messages;
+use crate::config::CompactionScope;
 use crate::config::Config;
 use crate::config::Constrained;
 use crate::config::ConstraintResult;
@@ -315,6 +316,7 @@ use crate::shell;
 use crate::skills::SkillLoadOutcome;
 use crate::state::AutoCompactWindowIds;
 use crate::state::AutoCompactWindowSnapshot;
+use crate::state::CompactionHistory;
 use crate::state::PendingRequestPermissions;
 use crate::state::SessionServices;
 use crate::state::SessionState;
@@ -1292,6 +1294,12 @@ impl Session {
                 let previous_turn_settings = self
                     .apply_rollout_reconstruction(&turn_context, &rollout_items)
                     .await;
+                if matches!(
+                    turn_context.config.compaction_scope,
+                    CompactionScope::PostSessionStart
+                ) {
+                    self.protect_current_history_from_compaction().await;
+                }
 
                 // If resuming, warn when the last recorded model differs from the current one.
                 let curr: &str = turn_context.model_info.slug.as_str();
@@ -1333,6 +1341,12 @@ impl Session {
                 }
                 self.apply_rollout_reconstruction(&turn_context, &rollout_items)
                     .await;
+                if matches!(
+                    turn_context.config.compaction_scope,
+                    CompactionScope::PostSessionStart
+                ) {
+                    self.protect_current_history_from_compaction().await;
+                }
 
                 // Seed usage info from the recorded rollout so UIs can show token counts
                 // immediately on resume/fork.
@@ -3577,6 +3591,16 @@ impl Session {
         state.clone_history()
     }
 
+    pub(crate) async fn clone_history_for_compaction(&self) -> CompactionHistory {
+        let state = self.state.lock().await;
+        state.clone_history_for_compaction()
+    }
+
+    async fn protect_current_history_from_compaction(&self) {
+        let mut state = self.state.lock().await;
+        state.protect_current_history_from_compaction();
+    }
+
     pub(crate) async fn current_window_id(&self) -> String {
         let state = self.state.lock().await;
         let thread_id = self.thread_id;
@@ -3604,6 +3628,7 @@ impl Session {
         turn_context: &TurnContext,
         world_state: Arc<WorldState>,
     ) -> u64 {
+        let compaction_history = self.clone_history_for_compaction().await;
         let window = {
             let mut state = self.state.lock().await;
             state.start_new_context_window()
@@ -3612,6 +3637,7 @@ impl Session {
         let context_items = self
             .build_initial_context_with_world_state(turn_context, world_state.as_ref())
             .await;
+        let context_items = compaction_history.prepend_prefix(context_items);
         let turn_context_item = turn_context.to_turn_context_item();
         self.replace_compacted_history(
             turn_context,

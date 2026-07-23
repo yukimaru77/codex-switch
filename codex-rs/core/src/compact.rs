@@ -230,7 +230,9 @@ async fn run_compact_task_inner_impl(
         .await;
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
 
-    let mut history = sess.clone_history().await;
+    let compaction_history = sess.clone_history_for_compaction().await;
+    let protected_prefix = compaction_history.protected_prefix;
+    let mut history = compaction_history.compactable_history;
     history.record_items(
         &[initial_input_for_turn.into()],
         turn_context.model_info.truncation_policy.into(),
@@ -320,7 +322,10 @@ async fn run_compact_task_inner_impl(
         }
     }
 
-    let history_snapshot = sess.clone_history().await;
+    let history_snapshot = sess
+        .clone_history_for_compaction()
+        .await
+        .compactable_history;
     let history_items = history_snapshot.raw_items();
     let summary_suffix = get_last_assistant_message_from_turn(history_items).unwrap_or_default();
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
@@ -344,6 +349,9 @@ async fn run_compact_task_inner_impl(
         new_history =
             insert_initial_context_before_last_real_user_or_summary(new_history, initial_context);
     }
+    let mut replacement_history = protected_prefix;
+    replacement_history.extend(new_history);
+    let new_history = replacement_history;
     let reference_context_item = match initial_context_injection {
         InitialContextInjection::DoNotInject => None,
         InitialContextInjection::BeforeLastUserMessage(_) => {

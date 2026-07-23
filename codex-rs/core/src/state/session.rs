@@ -26,6 +26,9 @@ use codex_utils_output_truncation::TruncationPolicy;
 pub(crate) struct SessionState {
     pub(crate) session_configuration: SessionConfiguration,
     pub(crate) history: ContextManager,
+    /// Number of leading history items loaded at this process's resume/fork boundary.
+    /// Those items are copied verbatim across compactions in post-session-start mode.
+    compaction_prefix_len: usize,
     pub(crate) latest_rate_limits: Option<RateLimitSnapshot>,
     pub(crate) server_reasoning_included: bool,
     pub(crate) mcp_dependency_prompted: HashSet<String>,
@@ -63,6 +66,7 @@ impl SessionState {
         Self {
             session_configuration,
             history,
+            compaction_prefix_len: 0,
             latest_rate_limits: None,
             server_reasoning_included: false,
             mcp_dependency_prompted: HashSet::new(),
@@ -111,11 +115,29 @@ impl SessionState {
         self.history.clone()
     }
 
+    pub(crate) fn clone_history_for_compaction(&self) -> CompactionHistory {
+        let prefix_len = self
+            .compaction_prefix_len
+            .min(self.history.raw_items().len());
+        let protected_prefix = self.history.raw_items()[..prefix_len].to_vec();
+        let mut compactable_history = self.history.clone();
+        compactable_history.replace(self.history.raw_items()[prefix_len..].to_vec());
+        CompactionHistory {
+            protected_prefix,
+            compactable_history,
+        }
+    }
+
+    pub(crate) fn protect_current_history_from_compaction(&mut self) {
+        self.compaction_prefix_len = self.history.raw_items().len();
+    }
+
     pub(crate) fn replace_history(
         &mut self,
         items: Vec<ResponseItem>,
         reference_context_item: Option<TurnContextItem>,
     ) {
+        self.compaction_prefix_len = self.compaction_prefix_len.min(items.len());
         self.history.replace(items);
         self.history
             .set_reference_context_item(reference_context_item);
@@ -312,6 +334,18 @@ impl SessionState {
         self.granted_permissions_by_environment_id
             .get(environment_id)
             .cloned()
+    }
+}
+
+pub(crate) struct CompactionHistory {
+    pub(crate) protected_prefix: Vec<ResponseItem>,
+    pub(crate) compactable_history: ContextManager,
+}
+
+impl CompactionHistory {
+    pub(crate) fn prepend_prefix(mut self, compacted_body: Vec<ResponseItem>) -> Vec<ResponseItem> {
+        self.protected_prefix.extend(compacted_body);
+        self.protected_prefix
     }
 }
 

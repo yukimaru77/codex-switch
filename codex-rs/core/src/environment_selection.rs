@@ -10,13 +10,13 @@ use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentConnectionState;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerError;
-use codex_protocol::protocol::EnvironmentConnectionEvent;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::EventMsg;
 #[cfg(test)]
 use codex_protocol::error::CodexErr;
 #[cfg(test)]
 use codex_protocol::error::Result as CodexResult;
+use codex_protocol::protocol::EnvironmentConnectionEvent;
+use codex_protocol::protocol::Event;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;

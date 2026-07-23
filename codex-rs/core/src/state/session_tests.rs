@@ -1,10 +1,89 @@
 use super::*;
 use crate::session::tests::make_session_configuration_for_tests;
 use crate::state::AutoCompactWindowSnapshot;
+use codex_protocol::models::ContentItem;
 use codex_protocol::protocol::CreditsSnapshot;
 use codex_protocol::protocol::RateLimitWindow;
 use codex_protocol::protocol::SpendControlLimitSnapshot;
 use pretty_assertions::assert_eq;
+
+fn text_message(role: &str, text: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: role.to_string(),
+        content: vec![ContentItem::InputText {
+            text: text.to_string(),
+        }],
+        phase: None,
+        internal_chat_message_metadata_passthrough: None,
+    }
+}
+
+#[tokio::test]
+async fn compaction_history_defaults_to_full_history() {
+    let session_configuration = make_session_configuration_for_tests().await;
+    let mut state = SessionState::new(session_configuration);
+    let history = vec![
+        text_message("user", "BEFORE-START"),
+        text_message("assistant", "AFTER-START"),
+    ];
+    state.replace_history(history.clone(), /*reference_context_item*/ None);
+
+    let compaction = state.clone_history_for_compaction();
+
+    assert!(compaction.protected_prefix.is_empty());
+    assert_eq!(compaction.compactable_history.raw_items(), history);
+}
+
+#[tokio::test]
+async fn compaction_prefix_survives_repeated_body_replacements() {
+    let session_configuration = make_session_configuration_for_tests().await;
+    let mut state = SessionState::new(session_configuration);
+    let prefix = vec![
+        text_message("user", "KB-BLOB-1"),
+        text_message("user", "KB-BLOB-2"),
+    ];
+    state.replace_history(prefix.clone(), /*reference_context_item*/ None);
+    state.protect_current_history_from_compaction();
+
+    let first_body = vec![text_message("user", "BODY-1")];
+    let mut full_history = prefix.clone();
+    full_history.extend(first_body.clone());
+    state.replace_history(full_history, /*reference_context_item*/ None);
+
+    let first_compaction = state.clone_history_for_compaction();
+    assert_eq!(first_compaction.protected_prefix, prefix);
+    assert_eq!(first_compaction.compactable_history.raw_items(), first_body);
+    state.replace_history(
+        first_compaction.prepend_prefix(vec![text_message("user", "SUMMARY-1")]),
+        /*reference_context_item*/ None,
+    );
+
+    let mut history_after_more_work = state.clone_history().into_raw_items();
+    history_after_more_work.push(text_message("user", "BODY-2"));
+    state.replace_history(
+        history_after_more_work,
+        /*reference_context_item*/ None,
+    );
+
+    let second_compaction = state.clone_history_for_compaction();
+    assert_eq!(second_compaction.protected_prefix, prefix);
+    assert_eq!(
+        second_compaction.compactable_history.raw_items(),
+        [
+            text_message("user", "SUMMARY-1"),
+            text_message("user", "BODY-2"),
+        ]
+    );
+    assert_eq!(
+        second_compaction.prepend_prefix(vec![text_message("user", "SUMMARY-2")]),
+        [
+            text_message("user", "KB-BLOB-1"),
+            text_message("user", "KB-BLOB-2"),
+            text_message("user", "SUMMARY-2"),
+        ]
+    );
+}
 
 #[tokio::test]
 // Verifies connector merging deduplicates repeated IDs.

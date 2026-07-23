@@ -5,6 +5,8 @@ use codex_utils_cli::ApprovalModeCliArg;
 use codex_utils_cli::CliConfigOverrides;
 use codex_utils_cli::SharedCliOptions;
 
+use crate::legacy_core::config::CompactionScope;
+
 #[derive(Parser, Clone, Debug)]
 #[command(version)]
 pub struct Cli {
@@ -70,6 +72,10 @@ pub struct Cli {
     /// Runs the TUI in inline mode, preserving terminal scrollback history.
     #[arg(long = "no-alt-screen", default_value_t = false)]
     pub no_alt_screen: bool,
+
+    /// Select which history is compacted after resuming or forking a session.
+    #[arg(long = "compaction-scope", value_enum, value_name = "SCOPE")]
+    pub compaction_scope: Option<CompactionScope>,
 
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,

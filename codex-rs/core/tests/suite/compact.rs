@@ -2,6 +2,7 @@ use anyhow::Result;
 use anyhow::anyhow;
 use codex_core::compact::SUMMARIZATION_PROMPT;
 use codex_core::compact::SUMMARY_PREFIX;
+use codex_core::config::CompactionScope;
 use codex_core::config::Config;
 use codex_features::Feature;
 use codex_login::CodexAuth;
@@ -49,6 +50,7 @@ use core_test_support::responses::ev_completed_with_tokens;
 use core_test_support::responses::ev_function_call;
 use core_test_support::responses::mount_compact_json_once;
 use core_test_support::responses::mount_compact_response_sequence;
+use core_test_support::responses::mount_compact_user_history_with_summary_sequence;
 use core_test_support::responses::mount_response_sequence;
 use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::mount_sse_once_match;
@@ -2005,33 +2007,23 @@ async fn auto_compact_starts_after_turn_started() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn auto_compact_runs_after_resume_when_token_usage_is_over_limit() {
+async fn post_session_start_scope_preserves_resume_prefix_across_two_auto_compactions() {
     skip_if_no_network!();
 
     let server = start_mock_server().await;
 
     let limit = 200_000;
     let over_limit_tokens = 250_000;
-    let remote_summary = "REMOTE_COMPACT_SUMMARY";
-
-    let compacted_history = vec![
-        codex_protocol::models::ResponseItem::Message {
-            id: None,
-            role: "assistant".to_string(),
-            content: vec![codex_protocol::models::ContentItem::OutputText {
-                text: remote_summary.to_string(),
-            }],
-            phase: None,
-            internal_chat_message_metadata_passthrough: None,
-        },
-        codex_protocol::models::ResponseItem::Compaction {
-            id: None,
-            encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
-            internal_chat_message_metadata_passthrough: None,
-        },
-    ];
-    let compact_mock =
-        mount_compact_json_once(&server, serde_json::json!({ "output": compacted_history })).await;
+    let first_remote_summary = "REMOTE_COMPACT_SUMMARY_1";
+    let second_remote_summary = "REMOTE_COMPACT_SUMMARY_2";
+    let compact_mock = mount_compact_user_history_with_summary_sequence(
+        &server,
+        vec![
+            first_remote_summary.to_string(),
+            second_remote_summary.to_string(),
+        ],
+    )
+    .await;
 
     let mut builder = test_codex().with_config(move |config| {
         set_test_compact_prompt(config);
@@ -2065,6 +2057,7 @@ async fn auto_compact_runs_after_resume_when_token_usage_is_over_limit() {
     let mut resume_builder = test_codex().with_config(move |config| {
         set_test_compact_prompt(config);
         config.model_auto_compact_token_limit = Some(limit);
+        config.compaction_scope = CompactionScope::PostSessionStart;
         let _ = config.features.disable(Feature::RemoteCompactionV2);
     });
     let resumed = resume_builder
@@ -2073,47 +2066,71 @@ async fn auto_compact_runs_after_resume_when_token_usage_is_over_limit() {
         .unwrap();
 
     let follow_up_user = "AFTER_RESUME_USER";
-    let sse_follow_up = sse(vec![
-        ev_assistant_message("m2", FINAL_REPLY),
-        ev_completed("r2"),
-    ]);
-
-    let follow_up_matcher = move |req: &wiremock::Request| {
-        let body = std::str::from_utf8(&req.body).unwrap_or("");
-        body.contains(follow_up_user) && body.contains(remote_summary)
-    };
-    mount_sse_once_match(&server, follow_up_matcher, sse_follow_up).await;
-
-    resumed
-        .codex
-        .submit(disabled_permission_user_turn(
-            follow_up_user,
-            resumed.cwd.path().to_path_buf(),
-            resumed.session_configured.model.clone(),
-        ))
-        .await
-        .unwrap();
-
-    wait_for_event(&resumed.codex, |event| {
-        matches!(event, EventMsg::ContextCompacted(_))
-    })
+    let follow_up_mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_assistant_message("m2", FINAL_REPLY),
+                ev_completed_with_tokens("r2", over_limit_tokens),
+            ]),
+            sse(vec![
+                ev_assistant_message("m3", "SECOND_FINAL_REPLY"),
+                ev_completed_with_tokens("r3", over_limit_tokens),
+            ]),
+            sse(vec![
+                ev_assistant_message("m4", "THIRD_FINAL_REPLY"),
+                ev_completed("r4"),
+            ]),
+        ],
+    )
     .await;
-    wait_for_event(&resumed.codex, |event| {
-        matches!(event, EventMsg::TurnComplete(_))
-    })
-    .await;
+
+    // The protected prefix is the entire history at resume time, so the first pre-turn
+    // compaction has an empty body and correctly makes no compact API request. This turn creates
+    // the first compactable body segment.
+    resumed.submit_turn(follow_up_user).await.unwrap();
+
+    let second_follow_up_user = "AFTER_FIRST_AUTO_COMPACT";
+    resumed.submit_turn(second_follow_up_user).await.unwrap();
+
+    let third_follow_up_user = "AFTER_SECOND_AUTO_COMPACT";
+    resumed.submit_turn(third_follow_up_user).await.unwrap();
 
     let compact_requests = compact_mock.requests();
+    let follow_up_requests = follow_up_mock.requests();
     assert_eq!(
         compact_requests.len(),
-        1,
-        "remote compaction should run once after resume"
+        2,
+        "remote compaction should run twice after two post-resume body segments"
     );
-    assert_eq!(
-        compact_requests[0].path(),
-        "/v1/responses/compact",
-        "remote compaction should hit the compact endpoint"
-    );
+    for request in &compact_requests {
+        assert_eq!(request.path(), "/v1/responses/compact");
+        let body = request.body_json().to_string();
+        assert!(
+            !body.contains("OVER_LIMIT_TURN"),
+            "startup history must not be sent for compaction: {body}"
+        );
+        assert!(
+            !body.contains(FIRST_REPLY),
+            "startup assistant output must not be sent for compaction: {body}"
+        );
+    }
+    let second_compact_body = compact_requests[1].body_json().to_string();
+    assert!(second_compact_body.contains(first_remote_summary));
+    assert!(second_compact_body.contains(follow_up_user));
+    assert_eq!(follow_up_requests.len(), 3);
+    let first_follow_up_body = follow_up_requests[0].body_json().to_string();
+    assert!(first_follow_up_body.contains("OVER_LIMIT_TURN"));
+    assert!(!first_follow_up_body.contains(first_remote_summary));
+    assert!(first_follow_up_body.contains(follow_up_user));
+    let second_follow_up_body = follow_up_requests[1].body_json().to_string();
+    assert!(second_follow_up_body.contains("OVER_LIMIT_TURN"));
+    assert!(second_follow_up_body.contains(first_remote_summary));
+    assert!(second_follow_up_body.contains(second_follow_up_user));
+    let third_follow_up_body = follow_up_requests[2].body_json().to_string();
+    assert!(third_follow_up_body.contains("OVER_LIMIT_TURN"));
+    assert!(third_follow_up_body.contains(second_remote_summary));
+    assert!(third_follow_up_body.contains(third_follow_up_user));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

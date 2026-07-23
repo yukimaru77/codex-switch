@@ -187,13 +187,7 @@ impl MonitorManager {
             }
         });
 
-        monitors.insert(
-            name.clone(),
-            MonitorHandle {
-                child,
-                cancel,
-            },
-        );
+        monitors.insert(name.clone(), MonitorHandle { child, cancel });
         Ok(())
     }
 
@@ -207,5 +201,4 @@ impl MonitorManager {
             Err(format!("No monitor named '{}' is running", name))
         }
     }
-
 }

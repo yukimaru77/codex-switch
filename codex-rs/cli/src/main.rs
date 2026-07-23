@@ -69,6 +69,8 @@ use state_db_recovery as local_state_db;
 
 use codex_config::LoaderOverrides;
 use codex_core::build_models_manager;
+#[cfg(test)]
+use codex_core::config::CompactionScope;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::edit::ConfigEditsBuilder;
@@ -2460,6 +2462,7 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
         strict_config,
         approval_policy,
         web_search,
+        compaction_scope,
         prompt,
         config_overrides,
         ..
@@ -2472,6 +2475,9 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
     }
     if web_search {
         interactive.web_search = true;
+    }
+    if compaction_scope.is_some() {
+        interactive.compaction_scope = compaction_scope;
     }
     if strict_config {
         interactive.strict_config = true;
@@ -3226,6 +3232,44 @@ mod tests {
         assert!(interactive.resume_picker);
         assert!(!interactive.resume_last);
         assert_eq!(interactive.resume_session_id, None);
+    }
+
+    #[test]
+    fn resume_compaction_scope_flag_is_forwarded() {
+        let interactive = finalize_resume_from_args(
+            [
+                "codex",
+                "resume",
+                "--compaction-scope",
+                "post-session-start",
+                "1234",
+            ]
+            .as_ref(),
+        );
+
+        assert_eq!(
+            interactive.compaction_scope,
+            Some(CompactionScope::PostSessionStart)
+        );
+    }
+
+    #[test]
+    fn fork_compaction_scope_flag_is_forwarded() {
+        let interactive = finalize_fork_from_args(
+            [
+                "codex",
+                "fork",
+                "--compaction-scope",
+                "post-session-start",
+                "1234",
+            ]
+            .as_ref(),
+        );
+
+        assert_eq!(
+            interactive.compaction_scope,
+            Some(CompactionScope::PostSessionStart)
+        );
     }
 
     #[test]

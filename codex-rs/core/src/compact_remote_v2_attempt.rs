@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 pub(super) struct RemoteCompactV2Attempt {
+    pub(super) protected_prefix: Vec<ResponseItem>,
     pub(super) trace_input_history: Option<Vec<ResponseItem>>,
     pub(super) prompt_input: Vec<ResponseItem>,
     pub(super) compaction_output: ResponseItem,
@@ -38,7 +39,9 @@ pub(super) async fn run_remote_compact_v2_attempt(
     analytics_details: &mut CompactionAnalyticsDetails,
 ) -> CodexResult<RemoteCompactV2Attempt> {
     let turn_context = &step_context.turn;
-    let mut history = sess.clone_history().await;
+    let compaction_history = sess.clone_history_for_compaction().await;
+    let protected_prefix = compaction_history.protected_prefix;
+    let mut history = compaction_history.compactable_history;
     let base_instructions = sess.get_base_instructions().await;
     let (rewritten_outputs, estimated_deleted_tokens) =
         trim_function_call_history_to_fit_context_window(
@@ -133,6 +136,7 @@ pub(super) async fn run_remote_compact_v2_attempt(
     let mut prompt_input = prompt.input;
     prompt_input.pop();
     Ok(RemoteCompactV2Attempt {
+        protected_prefix,
         trace_input_history,
         prompt_input,
         compaction_output,
