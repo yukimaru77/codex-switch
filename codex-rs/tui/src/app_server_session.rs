@@ -1605,6 +1605,7 @@ fn thread_resume_params_from_config(
         sandbox,
         permissions,
         config: config_overrides,
+        compaction_scope: Some(config.compaction_scope.as_cli_value().to_string()),
         developer_instructions: with_terminal_visualization_instructions(
             &config, /*control_instructions*/ None,
         ),
@@ -1640,6 +1641,7 @@ fn thread_fork_params_from_config(
         sandbox,
         permissions,
         config: config_request_overrides_from_config(&config),
+        compaction_scope: Some(config.compaction_scope.as_cli_value().to_string()),
         base_instructions: config.base_instructions.clone(),
         developer_instructions: with_terminal_visualization_instructions(
             &config,
@@ -1916,6 +1918,7 @@ pub(crate) fn app_server_rate_limit_snapshots(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::legacy_core::config::CompactionScope;
     use crate::legacy_core::config::ConfigBuilder;
     use crate::legacy_core::config::ConfigOverrides;
     use app_test_support::create_fake_rollout;
@@ -2547,6 +2550,34 @@ mod tests {
             explicit_overrides.get("personality"),
             Some(&serde_json::Value::String("none".to_string()))
         );
+    }
+
+    #[tokio::test]
+    async fn resume_and_fork_params_forward_compaction_scope() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let mut config = build_config(&temp_dir).await;
+        config.compaction_scope = CompactionScope::PostSessionStart;
+        let thread_id = ThreadId::new();
+
+        let resume = thread_resume_params_from_config(
+            config.clone(),
+            thread_id,
+            ThreadParamsMode::Embedded,
+            /*remote_cwd_override*/ None,
+            ResumeModelSettings::OverrideFromCurrentConfig,
+        );
+        let fork = thread_fork_params_from_config(
+            config,
+            thread_id,
+            ThreadParamsMode::Embedded,
+            /*remote_cwd_override*/ None,
+        );
+
+        assert_eq!(
+            resume.compaction_scope.as_deref(),
+            Some("post-session-start")
+        );
+        assert_eq!(fork.compaction_scope.as_deref(), Some("post-session-start"));
     }
 
     #[tokio::test]

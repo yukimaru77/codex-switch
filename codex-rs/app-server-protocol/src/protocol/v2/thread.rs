@@ -382,6 +382,9 @@ pub struct ThreadResumeParams {
     pub permissions: Option<String>,
     #[ts(optional = nullable)]
     pub config: Option<HashMap<String, serde_json::Value>>,
+    /// Select which history is eligible for compaction after this resume boundary.
+    #[ts(optional = nullable)]
+    pub compaction_scope: Option<String>,
     #[ts(optional = nullable)]
     pub base_instructions: Option<String>,
     #[ts(optional = nullable)]
@@ -570,6 +573,9 @@ pub struct ThreadForkParams {
     pub permissions: Option<String>,
     #[ts(optional = nullable)]
     pub config: Option<HashMap<String, serde_json::Value>>,
+    /// Select which history is eligible for compaction after this fork boundary.
+    #[ts(optional = nullable)]
+    pub compaction_scope: Option<String>,
     #[ts(optional = nullable)]
     pub base_instructions: Option<String>,
     #[ts(optional = nullable)]

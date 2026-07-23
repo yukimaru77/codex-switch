@@ -3,6 +3,7 @@ use super::turn_processor::can_accept_direct_input;
 use super::*;
 use crate::error_code::method_not_found;
 use codex_app_server_protocol::SelectedCapabilityRoot;
+use codex_core::config::CompactionScope;
 use codex_extension_api::ExtensionDataInit;
 use codex_protocol::config_types::MultiAgentMode;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
@@ -14,6 +15,21 @@ const THREAD_LIST_MAX_LIMIT: usize = 100;
 const CODEX_TUI_CLIENT_NAME: &str = "codex-tui";
 const THREAD_ROLLBACK_DEPRECATION_SUMMARY: &str =
     "thread/rollback is deprecated and will be removed soon";
+
+fn parse_compaction_scope(
+    value: Option<String>,
+) -> Result<Option<CompactionScope>, JSONRPCErrorError> {
+    value
+        .map(|value| {
+            CompactionScope::from_cli_value(&value).ok_or_else(|| {
+                invalid_request(format!(
+                    "invalid compactionScope `{value}`; expected `full-history` or \
+                     `post-session-start`"
+                ))
+            })
+        })
+        .transpose()
+}
 
 struct ThreadListFilters {
     model_providers: Option<Vec<String>>,
@@ -3112,6 +3128,7 @@ impl ThreadRequestProcessor {
             sandbox,
             permissions,
             config: mut request_overrides,
+            compaction_scope,
             base_instructions,
             developer_instructions,
             personality,
@@ -3174,6 +3191,7 @@ impl ThreadRequestProcessor {
             developer_instructions,
             personality,
         );
+        typesafe_overrides.compaction_scope = parse_compaction_scope(compaction_scope)?;
         let has_explicit_model_resume_override =
             has_model_resume_override(request_overrides.as_ref(), &typesafe_overrides);
         let persisted_metadata = self
@@ -4006,6 +4024,7 @@ impl ThreadRequestProcessor {
             sandbox,
             permissions,
             config: cli_overrides,
+            compaction_scope,
             base_instructions,
             developer_instructions,
             ephemeral,
@@ -4107,6 +4126,7 @@ impl ThreadRequestProcessor {
             developer_instructions,
             /*personality*/ None,
         );
+        typesafe_overrides.compaction_scope = parse_compaction_scope(compaction_scope)?;
         typesafe_overrides.ephemeral = ephemeral.then_some(true);
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
         let config = self

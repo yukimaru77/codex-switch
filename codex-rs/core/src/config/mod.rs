@@ -139,6 +139,23 @@ pub enum CompactionScope {
     PostSessionStart,
 }
 
+impl CompactionScope {
+    pub const fn as_cli_value(self) -> &'static str {
+        match self {
+            Self::FullHistory => "full-history",
+            Self::PostSessionStart => "post-session-start",
+        }
+    }
+
+    pub fn from_cli_value(value: &str) -> Option<Self> {
+        match value {
+            "full-history" => Some(Self::FullHistory),
+            "post-session-start" => Some(Self::PostSessionStart),
+            _ => None,
+        }
+    }
+}
+
 use crate::config::permissions::BUILT_IN_READ_ONLY_PROFILE;
 use crate::config::permissions::BUILT_IN_WORKSPACE_PROFILE;
 use crate::config::permissions::apply_network_proxy_feature_config;
