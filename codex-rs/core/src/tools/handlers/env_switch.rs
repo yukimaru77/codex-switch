@@ -511,13 +511,17 @@ async fn handle_remote_switch(
         ));
     }
     // --- Step 1: provision the remote codex exec-server --------------------------
-    let provisioned = ensure_remote_codex(&launcher, &VersionPolicy::HostVersion)
-        .await
-        .map_err(|e| {
-            FunctionCallError::RespondToModel(format!(
-                "env_switch: failed to provision remote codex: {e}"
-            ))
-        })?;
+    let provisioned = ensure_remote_codex(
+        &launcher,
+        &VersionPolicy::HostVersion,
+        session.services.environment_manager.http_client_factory(),
+    )
+    .await
+    .map_err(|e| {
+        FunctionCallError::RespondToModel(format!(
+            "env_switch: failed to provision remote codex: {e}"
+        ))
+    })?;
 
     let codex_path = provisioned.codex_path.clone();
     let deployed_version = provisioned.version.clone();
