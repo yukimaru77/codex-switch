@@ -2817,7 +2817,7 @@ mod tests {
                 cwd: None,
             },
             initialize_timeout: Duration::from_secs(5),
-        });
+        }, HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault));
 
         let first = client.get().await.expect("first stdio connect");
         let first_session = first.session_id().expect("first session id");

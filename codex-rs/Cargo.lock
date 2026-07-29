@@ -3093,7 +3093,7 @@ dependencies = [
 
 [[package]]
 name = "codex-exec-server-test-support"
-version = "0.0.0"
+version = "0.146.0"
 dependencies = [
  "anyhow",
  "codex-exec-server",
@@ -3268,7 +3268,7 @@ dependencies = [
 
 [[package]]
 name = "codex-git-attribution"
-version = "0.0.0"
+version = "0.146.0"
 dependencies = [
  "codex-backend-client",
  "codex-extension-api",
