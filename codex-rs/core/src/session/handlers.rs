@@ -193,9 +193,7 @@ pub(super) async fn thread_settings_applied_event(sess: &Session) -> EventMsg {
     };
     let mut thread_settings = snapshot.into_thread_settings_snapshot();
     thread_settings.active_environment_id = active_environment_id;
-    EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent {
-        thread_settings,
-    })
+    EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent { thread_settings })
 }
 
 pub(super) async fn user_input_or_turn_inner(

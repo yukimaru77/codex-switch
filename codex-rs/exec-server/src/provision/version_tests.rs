@@ -1,3 +1,7 @@
+use codex_http_client::ClientRouteClass;
+use codex_http_client::HttpClientFactory;
+use codex_http_client::OutboundProxyPolicy;
+use codex_http_client::RouteAwareClientPool;
 use pretty_assertions::assert_eq;
 
 use super::canonicalize_exact_version;
@@ -47,7 +51,11 @@ fn exact_policy_resolves_synchronously() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("runtime");
-    let v = rt.block_on(policy.resolve()).expect("resolve");
+    let http_client = RouteAwareClientPool::new(
+        HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+        ClientRouteClass::Other,
+    );
+    let v = rt.block_on(policy.resolve(&http_client)).expect("resolve");
     assert_eq!(v, "3.0.0");
 }
 

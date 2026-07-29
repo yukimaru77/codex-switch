@@ -485,7 +485,7 @@ mod tests {
 
     fn make_monitor_event(name: &str, summary: &str, wake: bool) -> MonitorEvent {
         MonitorEvent {
-            id: format!("test-{}", name),
+            id: format!("test-{name}"),
             monitor_name: name.to_string(),
             sequence: 0,
             kind: codex_protocol::protocol::MonitorEventKind::OutputBatch,

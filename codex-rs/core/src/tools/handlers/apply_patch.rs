@@ -662,13 +662,8 @@ pub(crate) async fn intercept_apply_patch(
     call_id: &str,
     tool_name: &str,
 ) -> Result<Option<FunctionToolOutput>, FunctionCallError> {
-    let sandbox = patch_verification_sandbox(
-        session.as_ref(),
-        turn.as_ref(),
-        &turn_environment,
-        &[],
-    )
-    .await;
+    let sandbox =
+        patch_verification_sandbox(session.as_ref(), turn.as_ref(), &turn_environment, &[]).await;
     match codex_apply_patch::maybe_parse_apply_patch_verified(command, cwd, fs, sandbox.as_ref())
         .await
     {
