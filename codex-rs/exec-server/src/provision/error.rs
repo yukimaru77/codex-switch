@@ -1,6 +1,7 @@
 //! Error type for remote provisioning operations.
 
-use codex_http_client::BuildCustomCaTransportError;
+use codex_http_client::HttpError;
+use codex_http_client::RouteAwareRequestError;
 
 /// Errors that can occur while probing or provisioning a remote codex binary.
 #[derive(Debug, thiserror::Error)]
@@ -23,11 +24,11 @@ pub enum ProvisionError {
 
     /// A network request to GitHub failed.
     #[error("failed to fetch release from GitHub: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(#[from] HttpError),
 
-    /// Building the HTTP client failed (e.g. bad CA certificate path).
-    #[error("failed to build HTTP client: {0}")]
-    HttpClientBuild(#[from] BuildCustomCaTransportError),
+    /// Routing or sending a network request to GitHub failed.
+    #[error("failed to route release request to GitHub: {0}")]
+    RouteAwareHttp(#[from] RouteAwareRequestError),
 
     /// GitHub API rate limit hit (HTTP 403 or 429).
     ///

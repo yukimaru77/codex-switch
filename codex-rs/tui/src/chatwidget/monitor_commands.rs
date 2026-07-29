@@ -54,7 +54,7 @@ impl ChatWidget {
                     }
                 });
 
-                self.add_info_message(format!("Monitor '{}' started: {}", name, command), None);
+                self.add_info_message(format!("Monitor '{name}' started: {command}"), None);
             }
             Some("stop") => {
                 if parts.len() < 2 {
@@ -73,7 +73,7 @@ impl ChatWidget {
                     }
                 });
 
-                self.add_info_message(format!("Monitor '{}' stopped.", name), None);
+                self.add_info_message(format!("Monitor '{name}' stopped."), None);
             }
             Some("status") => {
                 self.add_info_message(

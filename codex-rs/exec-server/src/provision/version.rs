@@ -7,8 +7,10 @@
 //! and `codex-rs/tui/src/updates.rs`.  Unifying these into a shared crate
 //! (e.g. `codex-updates`) is left as a follow-up to keep this PR's diff small.
 
-use codex_http_client::build_reqwest_client_with_custom_ca;
-use reqwest::StatusCode;
+use codex_http_client::RouteAwareClientPool;
+use http::StatusCode;
+use http::header::AUTHORIZATION;
+use http::header::USER_AGENT;
 use serde::Deserialize;
 
 use crate::provision::error::ProvisionError;
@@ -60,18 +62,21 @@ impl VersionPolicy {
     /// # Network
     /// Only [`VersionPolicy::Latest`] (and [`VersionPolicy::HostVersion`] when
     /// it falls back) performs a network request.
-    pub async fn resolve(&self) -> Result<String, ProvisionError> {
+    pub async fn resolve(
+        &self,
+        http_client: &RouteAwareClientPool,
+    ) -> Result<String, ProvisionError> {
         match self {
             VersionPolicy::Exact(v) => canonicalize_exact_version(v),
             VersionPolicy::HostVersion => {
                 let host_version = env!("CARGO_PKG_VERSION");
                 if is_dev_version(host_version) {
-                    resolve_latest_version().await
+                    resolve_latest_version(http_client).await
                 } else {
                     Ok(host_version.to_string())
                 }
             }
-            VersionPolicy::Latest => resolve_latest_version().await,
+            VersionPolicy::Latest => resolve_latest_version(http_client).await,
         }
     }
 }
@@ -123,16 +128,17 @@ struct GitHubRelease {
 ///
 /// HTTP 403/429 (rate limit) and 404 (release not found) are returned as
 /// dedicated [`ProvisionError`] variants with actionable messages.
-pub(crate) async fn resolve_latest_version() -> Result<String, ProvisionError> {
-    let client = build_reqwest_client_with_custom_ca(
-        reqwest::Client::builder().user_agent("codex-exec-server"),
-    )?;
-    let mut request = client.get("https://api.github.com/repos/openai/codex/releases/latest");
+pub(crate) async fn resolve_latest_version(
+    http_client: &RouteAwareClientPool,
+) -> Result<String, ProvisionError> {
+    let mut request = http_client
+        .get("https://api.github.com/repos/openai/codex/releases/latest")
+        .header(USER_AGENT, "codex-exec-server");
     // Authenticate when a token is available so the unauthenticated 60 req/hr
     // limit (which breaks provisioning under repeated use) is lifted to the
     // authenticated 5000 req/hr limit.
     if let Some(token) = github_token() {
-        request = request.bearer_auth(token);
+        request = request.header(AUTHORIZATION, format!("Bearer {token}"));
     }
     let response = request.send().await?;
     let status = response.status();

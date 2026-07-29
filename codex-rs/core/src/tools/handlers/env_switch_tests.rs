@@ -1,8 +1,8 @@
-use codex_exec_server::EnvironmentManager;
 use codex_exec_server::EnvironmentMetadata;
 use codex_exec_server::provision::Hop;
 use codex_exec_server::provision::RemoteLauncher;
 use codex_exec_server::provision::posix_single_quote;
+use codex_exec_server_test_support::environment_manager_without_environments;
 use codex_protocol::ThreadId;
 use codex_tools::ToolSpec;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -20,6 +20,7 @@ use super::hop_from_arg;
 use super::implicit_base_launcher;
 use super::resolve_remote_cwd_script;
 use super::validate_addressing_mode;
+use crate::environment_selection::TurnEnvironmentState;
 use crate::tools::handlers::environment_thread_keys;
 use crate::tools::handlers::resolve_tool_environment;
 
@@ -533,7 +534,7 @@ fn hop_from_arg_valid_docker_succeeds() {
 /// the cwd and shell values correctly.
 #[test]
 fn environment_manager_metadata_roundtrip() {
-    let manager = EnvironmentManager::without_environments();
+    let manager = environment_manager_without_environments();
     manager.set_environment_metadata(
         "ssh:myhost".to_string(),
         EnvironmentMetadata {
@@ -552,14 +553,14 @@ fn environment_manager_metadata_roundtrip() {
 /// get_environment_metadata returns None for an unknown id.
 #[test]
 fn environment_manager_metadata_missing_returns_none() {
-    let manager = EnvironmentManager::without_environments();
+    let manager = environment_manager_without_environments();
     assert!(manager.get_environment_metadata("ssh:unknown").is_none());
 }
 
 /// set_environment_metadata with shell=None round-trips correctly.
 #[test]
 fn environment_manager_metadata_no_shell() {
-    let manager = EnvironmentManager::without_environments();
+    let manager = environment_manager_without_environments();
     manager.set_environment_metadata(
         "docker:c".to_string(),
         EnvironmentMetadata {
@@ -577,7 +578,7 @@ fn environment_manager_metadata_no_shell() {
 /// set_last_launcher / get_last_launcher round-trip correctly.
 #[test]
 fn environment_manager_last_launcher_roundtrip() {
-    let manager = EnvironmentManager::without_environments();
+    let manager = environment_manager_without_environments();
     let launcher = RemoteLauncher::ssh("myhost");
     manager.set_last_launcher("thread-123".to_string(), launcher.clone());
 
@@ -590,14 +591,14 @@ fn environment_manager_last_launcher_roundtrip() {
 /// get_last_launcher returns None for an unknown thread key.
 #[test]
 fn environment_manager_last_launcher_missing_returns_none() {
-    let manager = EnvironmentManager::without_environments();
+    let manager = environment_manager_without_environments();
     assert!(manager.get_last_launcher("nonexistent-thread").is_none());
 }
 
 /// Overwriting metadata for the same id updates the stored value.
 #[test]
 fn environment_manager_metadata_overwrite() {
-    let manager = EnvironmentManager::without_environments();
+    let manager = environment_manager_without_environments();
     manager.set_environment_metadata(
         "ssh:host".to_string(),
         EnvironmentMetadata {
@@ -621,7 +622,7 @@ fn environment_manager_metadata_overwrite() {
 
 #[test]
 fn environment_manager_thread_metadata_prefers_requested_thread_order() {
-    let manager = EnvironmentManager::without_environments();
+    let manager = environment_manager_without_environments();
     manager.set_thread_environment_metadata(
         "child".to_string(),
         "ssh:shared".to_string(),

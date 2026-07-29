@@ -1463,8 +1463,8 @@ mod tests {
 
     use super::Environment;
     use super::EnvironmentManager;
-    use super::EnvironmentObservedStatus;
     use super::EnvironmentMetadata;
+    use super::EnvironmentObservedStatus;
     use super::LOCAL_ENVIRONMENT_ID;
     use super::REMOTE_ENVIRONMENT_ID;
     use super::noise_environment_config_from_values;
@@ -1931,7 +1931,7 @@ mod tests {
 
     #[tokio::test]
     async fn environment_manager_last_environment_id_roundtrip() {
-        let manager = EnvironmentManager::without_environments();
+        let manager = EnvironmentManager::without_environments(legacy_http_client_factory());
 
         assert!(manager.get_last_environment_id("thread-123").is_none());
         manager.set_last_environment_id("thread-123".to_string(), LOCAL_ENVIRONMENT_ID.to_string());
@@ -1949,7 +1949,7 @@ mod tests {
 
     #[tokio::test]
     async fn environment_manager_thread_environment_ids_roundtrip() {
-        let manager = EnvironmentManager::without_environments();
+        let manager = EnvironmentManager::without_environments(legacy_http_client_factory());
 
         assert!(manager.get_thread_environment_ids("thread-123").is_empty());
         manager.record_thread_environment_id("thread-123".to_string(), "remote-a".to_string());
@@ -1965,7 +1965,7 @@ mod tests {
 
     #[tokio::test]
     async fn environment_manager_clear_last_launcher() {
-        let manager = EnvironmentManager::without_environments();
+        let manager = EnvironmentManager::without_environments(legacy_http_client_factory());
         manager.set_last_launcher(
             "thread-123".to_string(),
             crate::provision::RemoteLauncher::ssh("hostname"),
