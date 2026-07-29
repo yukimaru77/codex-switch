@@ -48,7 +48,7 @@ impl MonitorManager {
     ) -> Result<(), String> {
         let mut monitors = self.monitors.lock().await;
         if monitors.contains_key(&name) {
-            return Err(format!("Monitor '{}' is already running", name));
+            return Err(format!("Monitor '{name}' is already running"));
         }
 
         let mut child = Command::new("sh")
@@ -58,7 +58,7 @@ impl MonitorManager {
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| format!("Failed to spawn monitor: {}", e))?;
+            .map_err(|e| format!("Failed to spawn monitor: {e}"))?;
 
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
         // P0-2: Take stderr to drain it
@@ -72,7 +72,6 @@ impl MonitorManager {
         // P0-2: Drain stderr in separate task
         if let Some(stderr) = stderr {
             let cancel_stderr = cancel.clone();
-            let name_stderr = monitor_name.clone();
             tokio::spawn(async move {
                 let mut buf = vec![0u8; 1024];
                 let mut stderr = stderr;
@@ -87,7 +86,6 @@ impl MonitorManager {
                         }
                     }
                 }
-                let _ = name_stderr;
             });
         }
 
@@ -122,7 +120,7 @@ impl MonitorManager {
                                     let summary = batch_buffer.join("\n");
                                     batch_buffer.clear();
                                     let event = MonitorEvent {
-                                        id: format!("mon-{}-{}", monitor_name, seq),
+                                        id: format!("mon-{monitor_name}-{seq}"),
                                         monitor_name: monitor_name.clone(),
                                         sequence: seq,
                                         kind: MonitorEventKind::OutputBatch,
@@ -148,7 +146,7 @@ impl MonitorManager {
                 let seq = seq_counter.fetch_add(1, Ordering::Relaxed);
                 let summary = batch_buffer.join("\n");
                 let event = MonitorEvent {
-                    id: format!("mon-{}-{}-final", monitor_name, seq),
+                    id: format!("mon-{monitor_name}-{seq}-final"),
                     monitor_name: monitor_name.clone(),
                     sequence: seq,
                     kind: MonitorEventKind::OutputBatch,
@@ -176,36 +174,32 @@ impl MonitorManager {
                     _ => MonitorEventKind::Cancelled,
                 };
                 let event = MonitorEvent {
-                    id: format!("mon-{}-{}-exit", monitor_name, exit_seq),
+                    id: format!("mon-{monitor_name}-{exit_seq}-exit"),
                     monitor_name: monitor_name.clone(),
                     sequence: exit_seq,
                     kind,
-                    summary: format!("Monitor '{}' has stopped.", monitor_name),
+                    summary: format!("Monitor '{monitor_name}' has stopped."),
                     wake_policy: MonitorWakePolicy::AttachOrWake,
                 };
                 event_sender.send(AppEvent::CodexOp(AppCommand::MonitorEvent { event }));
             }
         });
 
-        monitors.insert(
-            name.clone(),
-            MonitorHandle {
-                child,
-                cancel,
-            },
-        );
+        monitors.insert(name, MonitorHandle { child, cancel });
         Ok(())
     }
 
     pub async fn stop(&self, name: &str) -> Result<(), String> {
-        let mut monitors = self.monitors.lock().await;
-        if let Some(mut handle) = monitors.remove(name) {
+        let handle = {
+            let mut monitors = self.monitors.lock().await;
+            monitors.remove(name)
+        };
+        if let Some(mut handle) = handle {
             handle.cancel.cancel();
             let _ = handle.child.kill().await;
             Ok(())
         } else {
-            Err(format!("No monitor named '{}' is running", name))
+            Err(format!("No monitor named '{name}' is running"))
         }
     }
-
 }
