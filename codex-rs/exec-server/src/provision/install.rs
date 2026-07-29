@@ -4,9 +4,14 @@ use std::fmt::Write as FmtWrite;
 use std::process::Stdio;
 use std::time::Duration;
 
-use codex_http_client::build_reqwest_client_with_custom_ca;
+use codex_http_client::ClientRouteClass;
+use codex_http_client::HttpClientFactory;
+use codex_http_client::HttpResponse;
+use codex_http_client::RouteAwareClientPool;
 use futures::StreamExt;
-use reqwest::StatusCode;
+use http::StatusCode;
+use http::header::AUTHORIZATION;
+use http::header::USER_AGENT;
 use sha2::Digest;
 use sha2::Sha256;
 use tokio::fs::File;
@@ -73,7 +78,10 @@ const RELEASES_BASE: &str = "https://github.com/openai/codex/releases/download";
 pub async fn ensure_remote_codex(
     launcher: &RemoteLauncher,
     desired: &VersionPolicy,
+    http_client_factory: &HttpClientFactory,
 ) -> Result<ProvisionedCodex, ProvisionError> {
+    let http_client =
+        RouteAwareClientPool::new(http_client_factory.clone(), ClientRouteClass::Other);
     let probe_result = probe(launcher).await?;
     let triple = resolve_triple(&probe_result.os, &probe_result.arch)?;
     let remote_shell = probe_result.shell.clone();
@@ -94,7 +102,7 @@ pub async fn ensure_remote_codex(
     }
 
     // A download may be required: resolve the concrete version now.
-    let version = desired.resolve().await?;
+    let version = desired.resolve(&http_client).await?;
 
     // The resolved version may still match what is already installed.
     // Normalize both sides: trim whitespace and strip a leading 'v' so that
@@ -113,12 +121,18 @@ pub async fn ensure_remote_codex(
     let codex_path = managed_codex_path(&probe_result.home);
 
     // Attempt to download, verify, and stream the archive.
-    install_remote_codex(launcher, &triple, &version, &probe_result.home)
-        .await
-        .map_err(|install_err| ProvisionError::InstallRequiredVersionFailed {
-            version: version.clone(),
-            source: Box::new(install_err),
-        })?;
+    install_remote_codex(
+        launcher,
+        &triple,
+        &version,
+        &probe_result.home,
+        &http_client,
+    )
+    .await
+    .map_err(|install_err| ProvisionError::InstallRequiredVersionFailed {
+        version: version.clone(),
+        source: Box::new(install_err),
+    })?;
 
     // Verify the installed binary.
     let installed_version = verify_remote_version(launcher, &codex_path).await?;
@@ -152,10 +166,11 @@ async fn install_remote_codex(
     triple: &str,
     version: &str,
     remote_home: &str,
+    http_client: &RouteAwareClientPool,
 ) -> Result<(), ProvisionError> {
     timeout(
         Duration::from_secs(INSTALL_TIMEOUT_SECS),
-        install_remote_codex_inner(launcher, triple, version, remote_home),
+        install_remote_codex_inner(launcher, triple, version, remote_home, http_client),
     )
     .await
     .map_err(|_| ProvisionError::Timeout {
@@ -174,21 +189,18 @@ async fn install_remote_codex_inner(
     triple: &str,
     version: &str,
     remote_home: &str,
+    http_client: &RouteAwareClientPool,
 ) -> Result<(), ProvisionError> {
     let asset_name = format!("codex-package-{triple}.tar.gz");
     let archive_url = format!("{RELEASES_BASE}/rust-v{version}/{asset_name}");
     let sums_url = format!("{RELEASES_BASE}/rust-v{version}/codex-package_SHA256SUMS");
 
-    // Use the shared workspace HTTP client so CODEX_CA_CERTIFICATE and
-    // proxy settings are inherited automatically.
-    let client = build_reqwest_client_with_custom_ca(
-        reqwest::Client::builder().user_agent("codex-exec-server"),
-    )?;
-
     // Download SHA256SUMS first (small file; full buffer is fine).
-    let mut sums_request = client.get(&sums_url);
+    let mut sums_request = http_client
+        .get(&sums_url)
+        .header(USER_AGENT, "codex-exec-server");
     if let Some(token) = github_token() {
-        sums_request = sums_request.bearer_auth(token);
+        sums_request = sums_request.header(AUTHORIZATION, format!("Bearer {token}"));
     }
     let sums_response = sums_request.send().await?;
     check_github_response_status(&sums_response, triple, version)?;
@@ -206,9 +218,11 @@ async fn install_remote_codex_inner(
         .await
         .map_err(ProvisionError::TempFileIo)?;
 
-    let mut archive_request = client.get(&archive_url);
+    let mut archive_request = http_client
+        .get(&archive_url)
+        .header(USER_AGENT, "codex-exec-server");
     if let Some(token) = github_token() {
-        archive_request = archive_request.bearer_auth(token);
+        archive_request = archive_request.header(AUTHORIZATION, format!("Bearer {token}"));
     }
     let archive_response = archive_request.send().await?;
     check_github_response_status(&archive_response, triple, version)?;
@@ -319,7 +333,7 @@ async fn install_remote_codex_inner(
 /// Note: this consumes a shared reference; call it before `.error_for_status()`
 /// or `.bytes()`.
 fn check_github_response_status(
-    response: &reqwest::Response,
+    response: &HttpResponse,
     triple: &str,
     version: &str,
 ) -> Result<(), ProvisionError> {
