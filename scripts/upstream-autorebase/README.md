@@ -13,8 +13,9 @@ launchd (6時間ごと)
        3. 専用 worktree を作成(メインの checkout には一切触らない)
           ../codex-autorebase-worktrees/env-switch-monitor-v<NEW>
        4. git rebase --onto rust-v<NEW> rust-v<OLD> で追加機能コミットを載せ替え
-       5. cargo build --bin codex + 統合テスト用 MCP stdio helper の事前ビルド +
-          cargo nextest run(追加機能が触っているクレートを diff から自動算出してスコープ)
+       5. cargo build --bin codex + app-server 統合テスト用 code-mode host +
+          MCP stdio helper の事前ビルド + cargo nextest run
+          (追加機能が触っているクレートを diff から自動算出してスコープ)
        6. 失敗した場合:
           - rebase コンフリクト → worktree を rust-v<NEW> にリセットし、
             旧差分 (rust-v<OLD>..env-switch-monitor-v<OLD>) を提示して
