@@ -268,6 +268,15 @@ verify() {
         log "Build FAILED (see $_vlog)"
         return 1
     fi
+    # App-server's remote code-mode integration test launches the standalone
+    # host through codex_utils_cargo_bin. A scoped package test does not build
+    # that workspace binary automatically.
+    log "Verify: cargo build -p codex-code-mode-host --bin codex-code-mode-host"
+    if ! (cd "$WT/codex-rs" && \
+            cargo build -p codex-code-mode-host --bin codex-code-mode-host) >> "$_vlog" 2>&1; then
+        log "Code-mode host build FAILED (see $_vlog)"
+        return 1
+    fi
     # Core integration tests resolve this helper through the shared target
     # directory, but cargo does not build it when codex-rmcp-client is outside
     # the package filter computed from the feature diff.
