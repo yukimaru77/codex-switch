@@ -51,9 +51,12 @@ use serde_json::Map;
 use serde_json::Value;
 use std::path::Path;
 
+use crate::config::PermissionProfileSnapshot;
+use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::function_tool::FunctionCallError;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
+use crate::session::turn_context::EnvironmentConfig;
 use crate::session::turn_context::TurnContext;
 use crate::session::turn_context::TurnEnvironment;
 pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
@@ -235,6 +238,25 @@ fn env_switch_metadata(
         .or_else(|| manager.get_environment_metadata(environment_id))
 }
 
+fn dynamic_environment_defaults(
+    turn: &TurnContext,
+) -> (Vec<codex_utils_path_uri::PathUri>, EnvironmentConfig) {
+    turn.environments.primary().map_or_else(
+        || {
+            (
+                Vec::new(),
+                EnvironmentConfig {
+                    allow_login_shell: turn.config.permissions.allow_login_shell,
+                    permission_profile: PermissionProfileSnapshot::legacy(
+                        turn.permission_profile(),
+                    ),
+                },
+            )
+        },
+        |primary| (primary.workspace_roots().to_vec(), primary.config.clone()),
+    )
+}
+
 fn turn_environment_from_env_switch_metadata(
     session: &Session,
     turn: &TurnContext,
@@ -266,14 +288,14 @@ fn turn_environment_from_env_switch_metadata(
     let shell = meta
         .shell
         .map(|shell| crate::shell::shell_for_remote_path(std::path::Path::new(&shell)));
+    let (workspace_roots, config) = dynamic_environment_defaults(turn);
     Ok(TurnEnvironment::new(
         environment_id.to_string(),
         environment,
         codex_utils_path_uri::PathUri::from_abs_path(&cwd),
-        turn.environments
-            .primary()
-            .map_or_else(Vec::new, |primary| primary.workspace_roots().to_vec()),
+        workspace_roots,
         shell,
+        config,
     ))
 }
 
@@ -338,14 +360,14 @@ pub(crate) async fn resolve_tool_environment(
             // turn's environment list.
             #[allow(deprecated)]
             let cwd = turn.cwd.clone();
+            let (workspace_roots, config) = dynamic_environment_defaults(turn);
             return Ok(Some(TurnEnvironment::new(
                 LOCAL_ENVIRONMENT_ID.to_string(),
                 environment,
                 codex_utils_path_uri::PathUri::from_abs_path(&cwd),
-                turn.environments
-                    .primary()
-                    .map_or_else(Vec::new, |primary| primary.workspace_roots().to_vec()),
+                workspace_roots,
                 None,
+                config,
             )));
         }
         return Err(FunctionCallError::RespondToModel(
@@ -417,14 +439,22 @@ pub(crate) async fn resolve_tool_environment(
 }
 
 pub(crate) fn default_tool_environment_id(session: &Session, turn: &TurnContext) -> Option<String> {
+    default_tool_environment_id_for_snapshot(session, turn, &turn.environments)
+}
+
+fn default_tool_environment_id_for_snapshot(
+    session: &Session,
+    turn: &TurnContext,
+    environments: &TurnEnvironmentSnapshot,
+) -> Option<String> {
     last_env_switch_environment_id(session, turn).or_else(|| {
-        turn.environments
+        environments
             .primary()
             .map(|environment| environment.environment_id.clone())
             .or_else(|| {
-                turn.environments
-                    .starting
-                    .first()
+                environments
+                    .starting()
+                    .next()
                     .map(|environment| environment.selection.environment_id.clone())
             })
     })
@@ -433,9 +463,12 @@ pub(crate) fn default_tool_environment_id(session: &Session, turn: &TurnContext)
 pub(crate) fn environment_selections_with_default(
     session: &Session,
     turn: &TurnContext,
+    environments: &TurnEnvironmentSnapshot,
 ) -> Vec<TurnEnvironmentSelection> {
-    let mut selections = turn.environments.to_selections();
-    let Some(default_environment_id) = default_tool_environment_id(session, turn) else {
+    let mut selections = environments.to_selections();
+    let Some(default_environment_id) =
+        default_tool_environment_id_for_snapshot(session, turn, environments)
+    else {
         return selections;
     };
 
@@ -744,6 +777,7 @@ mod tests {
             ),
             local.cwd().clone(),
             None,
+            local.config.clone(),
         );
         turn.environments.turn_environments = vec![remote, local];
 
@@ -844,7 +878,7 @@ mod tests {
         manager.record_thread_environment_id(thread_key.clone(), "ssh:mine".to_string());
         manager.set_last_environment_id(thread_key, "ssh:mine".to_string());
 
-        let selections = environment_selections_with_default(&session, &turn);
+        let selections = environment_selections_with_default(&session, &turn, &turn.environments);
 
         assert_eq!(
             selections
@@ -876,19 +910,29 @@ mod tests {
                 None,
             )
             .expect("seed remote environment");
+        let environment_config = turn
+            .environments
+            .primary()
+            .expect("primary environment")
+            .config()
+            .clone();
         turn.environments
-            .turn_environments
-            .push(TurnEnvironment::new(
-                "ssh:mine".to_string(),
+            .environments
+            .push(TurnEnvironmentState::Ready(TurnEnvironment::new(
+                TurnEnvironmentSelection {
+                    environment_id: "ssh:mine".to_string(),
+                    cwd: AbsolutePathBuf::from_absolute_path("/old")
+                        .expect("old cwd")
+                        .into(),
+                    config: EnvironmentConfigState::Ready(environment_config),
+                },
+                EnvironmentConfigOrigin::Thread,
                 Arc::new(
                     Environment::create_for_tests(Some("ws://127.0.0.1:8765".to_string()))
                         .expect("remote environment"),
                 ),
-                AbsolutePathBuf::from_absolute_path("/old")
-                    .expect("old cwd")
-                    .into(),
                 None,
-            ));
+            )));
         manager.set_environment_metadata(
             "ssh:mine".to_string(),
             EnvironmentMetadata {
@@ -907,7 +951,7 @@ mod tests {
         manager.record_thread_environment_id(thread_key.clone(), "ssh:mine".to_string());
         manager.set_last_environment_id(thread_key, "ssh:mine".to_string());
 
-        let selections = environment_selections_with_default(&session, &turn);
+        let selections = environment_selections_with_default(&session, &turn, &turn.environments);
 
         assert_eq!(
             selections

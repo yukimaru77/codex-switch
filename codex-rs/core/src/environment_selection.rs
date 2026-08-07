@@ -148,7 +148,21 @@ impl StartingTurnEnvironment {
     }
 
     pub(crate) fn resolved(&self) -> Option<Result<TurnEnvironment, Arc<ExecServerError>>> {
-        self.resolution.clone().now_or_never()
+        match self.resolution.clone().now_or_never()? {
+            Ok(environment) => {
+                let mut turn_environment = TurnEnvironment::new(
+                    self.selection.environment_id.clone(),
+                    environment.environment,
+                    self.selection.cwd.clone(),
+                    self.selection.workspace_roots.clone(),
+                    environment.shell,
+                    self.config.clone(),
+                );
+                turn_environment.shell_snapshot = environment.shell_snapshot;
+                Some(Ok(turn_environment))
+            }
+            Err(err) => Some(Err(err)),
+        }
     }
 }
 
@@ -764,6 +778,16 @@ impl TurnEnvironmentSnapshot {
 }
 
 #[cfg(test)]
+fn test_environment_config() -> EnvironmentConfig {
+    EnvironmentConfig {
+        allow_login_shell: true,
+        permission_profile: crate::config::PermissionProfileSnapshot::legacy(
+            codex_protocol::models::PermissionProfile::read_only(),
+        ),
+    }
+}
+
+#[cfg(test)]
 fn resolve_environment_selections(
     environment_manager: &EnvironmentManager,
     environments: &[TurnEnvironmentSelection],
@@ -791,16 +815,18 @@ fn resolve_environment_selections(
         let shell = metadata
             .and_then(|metadata| metadata.shell)
             .map(|shell| crate::shell::shell_for_remote_path(std::path::Path::new(&shell)));
-        turn_environments.push(TurnEnvironment::new(
-            environment_id,
+        let mut selection = selected_environment.clone();
+        selection.cwd = cwd;
+        selection.config = EnvironmentConfigState::Ready(test_environment_config());
+        turn_environments.push(TurnEnvironmentState::Ready(TurnEnvironment::new(
+            selection,
+            EnvironmentConfigOrigin::Thread,
             environment,
-            cwd,
             shell,
-        ));
+        )));
     }
     Ok(TurnEnvironmentSnapshot {
-        turn_environments,
-        starting: Vec::new(),
+        environments: turn_environments,
     })
 }
 
@@ -833,14 +859,6 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message;
 
     use super::*;
-
-    fn test_environment_config() -> EnvironmentConfig {
-        EnvironmentConfig {
-            allow_login_shell: true,
-            permission_profile: PermissionProfileSnapshot::legacy(PermissionProfile::read_only()),
-            selected_capability_roots: Vec::new(),
-        }
-    }
 
     async fn resolve_turn_environments(
         environment_manager: Arc<EnvironmentManager>,

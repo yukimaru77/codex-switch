@@ -629,7 +629,9 @@ fn turn_user_input(input: &[TurnInput]) -> Vec<UserInput> {
         .iter()
         .filter_map(|item| match item {
             TurnInput::UserInput { content, .. } => Some(content.as_slice()),
-            TurnInput::ResponseItem(_) | TurnInput::InterAgentCommunication(_) => None,
+            TurnInput::ResponseItem(_)
+            | TurnInput::InterAgentCommunication(_)
+            | TurnInput::MonitorEvent(_) => None,
         })
         .flatten()
         .cloned()

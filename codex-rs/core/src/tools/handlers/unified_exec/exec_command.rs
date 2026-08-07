@@ -14,8 +14,8 @@ use crate::tools::handlers::implicit_granted_permissions;
 use crate::tools::handlers::normalize_and_validate_additional_permissions;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
-use crate::tools::handlers::resolve_sandbox_permissions;
 use crate::tools::handlers::remote_command_advisory;
+use crate::tools::handlers::resolve_sandbox_permissions;
 use crate::tools::handlers::resolve_tool_environment;
 use crate::tools::handlers::rewrite_function_string_argument;
 use crate::tools::handlers::updated_hook_command;
@@ -358,7 +358,6 @@ impl ExecCommandHandler {
         match manager
             .exec_command(
                 ExecCommandRequest {
-                    environment_id: turn_environment.environment_id.clone(),
                     command,
                     shell_type,
                     hook_command: hook_command.clone(),

@@ -4,6 +4,8 @@ use codex_exec_server::provision::RemoteLauncher;
 use codex_exec_server::provision::posix_single_quote;
 use codex_exec_server_test_support::environment_manager_without_environments;
 use codex_protocol::ThreadId;
+use codex_protocol::protocol::EnvironmentConfigState;
+use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_tools::ToolSpec;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::sync::Arc;
@@ -21,6 +23,7 @@ use super::implicit_base_launcher;
 use super::resolve_remote_cwd_script;
 use super::validate_addressing_mode;
 use crate::environment_selection::TurnEnvironmentState;
+use crate::environment_selection::EnvironmentConfigOrigin;
 use crate::tools::handlers::environment_thread_keys;
 use crate::tools::handlers::resolve_tool_environment;
 
@@ -859,6 +862,12 @@ async fn resolve_tool_environment_uses_env_switch_default_and_explicit_override(
 #[tokio::test]
 async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot() {
     let (session, mut turn) = crate::session::tests::make_session_and_context().await;
+    let environment_config = turn
+        .environments
+        .primary()
+        .expect("primary environment")
+        .config
+        .clone();
     let thread_key = session.thread_id.to_string();
     let manager = &session.services.environment_manager;
     let environment = Arc::new(
@@ -873,16 +882,22 @@ async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot
         )
         .expect("seed remote environment");
     turn.environments
-        .turn_environments
-        .push(crate::session::turn_context::TurnEnvironment::new(
-            "ssh:mine".to_string(),
-            environment,
-            AbsolutePathBuf::from_absolute_path("/old")
-                .expect("old cwd")
-                .into(),
-            Some(crate::shell::get_shell_by_model_provided_path(
-                &std::path::PathBuf::from("/bin/bash"),
-            )),
+        .environments
+        .push(TurnEnvironmentState::Ready(
+            crate::session::turn_context::TurnEnvironment::new(
+                TurnEnvironmentSelection {
+                    environment_id: "ssh:mine".to_string(),
+                    cwd: AbsolutePathBuf::from_absolute_path("/old")
+                        .expect("old cwd")
+                        .into(),
+                    config: EnvironmentConfigState::Ready(environment_config),
+                },
+                EnvironmentConfigOrigin::Thread,
+                environment,
+                Some(crate::shell::get_shell_by_model_provided_path(
+                    &std::path::PathBuf::from("/bin/bash"),
+                )),
+            ),
         ));
     manager.set_thread_environment_metadata(
         thread_key.clone(),

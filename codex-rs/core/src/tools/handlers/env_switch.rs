@@ -467,11 +467,12 @@ fn derive_exec_server_policy_flags(turn: &TurnContext) -> Vec<String> {
     use codex_protocol::models::PermissionProfile;
     use codex_protocol::protocol::AskForApproval;
 
-    let sandbox_tag = match &turn.permission_profile {
+    let permission_profile = turn.permission_profile();
+    let sandbox_tag = match &permission_profile {
         PermissionProfile::Disabled => "danger-full-access",
         PermissionProfile::External { .. } => "workspace-write",
         PermissionProfile::Managed { .. } => {
-            let fsp = turn.permission_profile.file_system_sandbox_policy();
+            let fsp = permission_profile.file_system_sandbox_policy();
             if fsp.has_full_disk_write_access() {
                 "danger-full-access"
             } else {
@@ -480,7 +481,7 @@ fn derive_exec_server_policy_flags(turn: &TurnContext) -> Vec<String> {
         }
     };
 
-    let approval_tag = match turn.approval_policy.value() {
+    let approval_tag = match turn.approval_policy() {
         AskForApproval::Never => "never",
         _ => "on-failure",
     };
@@ -503,7 +504,7 @@ async fn handle_remote_switch(
     explicit_cwd: Option<String>,
 ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
     if matches!(
-        turn.permission_profile,
+        turn.permission_profile(),
         codex_protocol::models::PermissionProfile::External { .. }
     ) {
         return Err(FunctionCallError::RespondToModel(
