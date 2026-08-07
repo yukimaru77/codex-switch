@@ -240,7 +240,10 @@ impl ThreadEventStore {
             .cloned()
             .collect();
         if let Some(notification) = &self.latest_thread_settings_notification {
-            events.insert(0, ThreadBufferedEvent::Notification(notification.clone()));
+            events.insert(
+                0,
+                ThreadBufferedEvent::Notification(Box::new(notification.clone())),
+            );
         }
         ThreadEventSnapshot {
             session: self.session.clone(),

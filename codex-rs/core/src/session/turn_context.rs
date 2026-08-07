@@ -952,9 +952,10 @@ impl Session {
         multi_agent_runtime: TurnMultiAgentRuntime,
         git_enrichment_policy: GitEnrichmentPolicy,
     ) -> Arc<TurnContext> {
-        self.services
-            .turn_environments
-            .update_selections(session_configuration.environment_selections());
+        self.services.turn_environments.update_selections(
+            session_configuration.environment_selections(),
+            &session_configuration.environment_config(),
+        );
         let turn_environments = self.services.turn_environments.snapshot().await;
         let cwd = turn_environments
             .single_local_environment_cwd()

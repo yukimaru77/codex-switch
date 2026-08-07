@@ -770,17 +770,61 @@ mod tests {
             "mail",
             false,
         );
-        input_queue.enqueue_mailbox_communication(mail).await;
         input_queue
-            .enqueue_monitor_event(make_monitor_event("test", "event", false))
+            .enqueue_mailbox_communication(mail.clone(), /*parent_turn_id*/ None)
             .await;
+        let event = make_monitor_event("test", "event", /*wake*/ false);
+        input_queue.enqueue_monitor_event(event.clone()).await;
 
-        let items = input_queue.drain_mailbox_input_items().await;
-        assert_eq!(items.len(), 2);
-        assert!(matches!(&items[0], TurnInput::InterAgentCommunication(_)));
-        assert!(matches!(&items[1], TurnInput::MonitorEvent(_)));
+        assert_eq!(
+            input_queue.drain_mailbox_input_items().await,
+            (
+                vec![
+                    TurnInput::InterAgentCommunication(mail),
+                    TurnInput::MonitorEvent(event),
+                ],
+                None,
+                None,
+            )
+        );
 
         assert!(!input_queue.has_pending_mailbox_items().await);
+    }
+
+    #[tokio::test]
+    async fn deferred_mailbox_suppresses_mail_but_not_monitor_events() {
+        let input_queue = InputQueue::new();
+        let active_turn = Mutex::new(Some(ActiveTurn::default()));
+        let turn_state = Arc::clone(
+            &active_turn
+                .lock()
+                .await
+                .as_ref()
+                .expect("active turn")
+                .turn_state,
+        );
+        turn_state
+            .lock()
+            .await
+            .set_mailbox_delivery_phase(MailboxDeliveryPhase::NextTurn);
+
+        input_queue
+            .enqueue_mailbox_communication(
+                make_mail(
+                    AgentPath::root(),
+                    AgentPath::try_from("/root/worker").expect("agent path"),
+                    "queued mail",
+                    /*trigger_turn*/ false,
+                ),
+                /*parent_turn_id*/ None,
+            )
+            .await;
+        assert!(!input_queue.has_pending_input(&active_turn).await);
+
+        input_queue
+            .enqueue_monitor_event(make_monitor_event("test", "event", /*wake*/ false))
+            .await;
+        assert!(input_queue.has_pending_input(&active_turn).await);
     }
 
     #[tokio::test]
