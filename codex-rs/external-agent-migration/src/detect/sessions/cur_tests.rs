@@ -7,9 +7,14 @@ use std::time::Duration;
 use std::time::SystemTime;
 use tempfile::TempDir;
 
+fn temp_dir_in_test_workspace() -> TempDir {
+    let current_dir = std::env::current_dir().expect("current dir");
+    TempDir::new_in(current_dir).expect("tempdir")
+}
+
 #[test]
 fn detects_cur_transcript_with_project_cwd() {
-    let root = TempDir::new().expect("tempdir");
+    let root = temp_dir_in_test_workspace();
     let project_root = root.path().join("workspace with.dots_and-dashes");
     fs::create_dir_all(&project_root).expect("project root");
     let external_agent_home = root.path().join(".external");
@@ -36,7 +41,7 @@ fn detects_cur_transcript_with_project_cwd() {
 
 #[test]
 fn detects_projectless_cur_transcript_without_embedded_metadata() {
-    let root = TempDir::new().expect("tempdir");
+    let root = temp_dir_in_test_workspace();
     let external_agent_home = root.path().join(".cursor");
     let transcript = write_transcript(
         &external_agent_home,
@@ -73,7 +78,7 @@ fn resolves_projectless_cur_cwd_from_relative_home() {
 
 #[test]
 fn detects_cur_transcript_with_embedded_unc_cwd() {
-    let root = TempDir::new().expect("tempdir");
+    let root = temp_dir_in_test_workspace();
     let external_agent_home = root.path().join(".external");
     let encoded_project = "server-share-repo";
     let unc_cwd = PathBuf::from(r"\\server\share\repo");
@@ -123,7 +128,7 @@ fn detects_cur_transcript_with_embedded_unc_cwd() {
 
 #[test]
 fn skips_cur_subagent_transcripts() {
-    let root = TempDir::new().expect("tempdir");
+    let root = temp_dir_in_test_workspace();
     let project_root = root.path().join("workspace");
     fs::create_dir_all(&project_root).expect("project root");
     let external_agent_home = root.path().join(".external");
@@ -163,7 +168,7 @@ fn skips_cur_subagent_transcripts() {
 
 #[test]
 fn rejects_ambiguous_encoded_project_cwd() {
-    let root = TempDir::new().expect("tempdir");
+    let root = temp_dir_in_test_workspace();
     let nested_project = root.path().join("workspace").join("nested");
     let hyphenated_project = root.path().join("workspace-nested");
     fs::create_dir_all(&nested_project).expect("nested project");
@@ -177,7 +182,7 @@ fn rejects_ambiguous_encoded_project_cwd() {
 
 #[test]
 fn ignores_cur_sessions_older_than_import_window() {
-    let root = TempDir::new().expect("tempdir");
+    let root = temp_dir_in_test_workspace();
     let project_root = root.path().join("workspace");
     fs::create_dir_all(&project_root).expect("project root");
     let external_agent_home = root.path().join(".external");
@@ -201,7 +206,7 @@ fn ignores_cur_sessions_older_than_import_window() {
 
 #[test]
 fn detects_cur_sessions_in_batches_and_redetects_modified_imports() {
-    let root = TempDir::new().expect("tempdir");
+    let root = temp_dir_in_test_workspace();
     let project_root = root.path().join("workspace");
     fs::create_dir_all(&project_root).expect("project root");
     let external_agent_home = root.path().join(".external");
