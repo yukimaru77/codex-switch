@@ -131,7 +131,11 @@ pub(crate) async fn run_codex_thread_interactive(
         inherited_exec_policy: Some(Arc::clone(&parent_session.services.exec_policy)),
         parent_rollout_thread_trace: codex_rollout_trace::ThreadTraceContext::disabled(),
         parent_trace: None,
-        environment_selections: environment_selections_with_default(&parent_session, &parent_ctx),
+        environment_selections: environment_selections_with_default(
+            &parent_session,
+            &parent_ctx,
+            &parent_ctx.environments,
+        ),
         thread_extension_init: codex_extension_api::ExtensionDataInit::default(),
         client_mcp_extensions: parent_session.services.client_mcp_extensions.clone(),
         analytics_events_client: Some(parent_session.services.analytics_events_client.clone()),

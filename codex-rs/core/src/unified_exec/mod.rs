@@ -90,7 +90,6 @@ impl UnifiedExecContext {
 
 #[derive(Debug)]
 pub(crate) struct ExecCommandRequest {
-    pub environment_id: String,
     pub command: Vec<String>,
     pub shell_type: ShellType,
     pub hook_command: String,

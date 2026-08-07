@@ -1380,9 +1380,9 @@ async fn thread_settings_update_refreshes_status_line_with_env_switch_badge() {
     let expected_cwd = test_path_display("/tmp/local-project");
     assert_eq!(app.chat_widget.status_line_text(), Some(expected_cwd));
 
-    app.handle_thread_event_now(ThreadBufferedEvent::Notification(
+    app.handle_thread_event_now(ThreadBufferedEvent::Notification(Box::new(
         env_switch_thread_settings_updated(thread_id),
-    ));
+    )));
 
     assert_eq!(
         app.chat_widget.status_line_text(),
@@ -1406,9 +1406,9 @@ async fn replayed_thread_settings_update_restores_env_switch_badge() {
                 test_path_buf("/tmp/local-project"),
             )),
             turns: Vec::new(),
-            events: vec![ThreadBufferedEvent::Notification(
+            events: vec![ThreadBufferedEvent::Notification(Box::new(
                 env_switch_thread_settings_updated(thread_id),
-            )],
+            ))],
             input_state: None,
         },
         /*resume_restored_queue*/ false,

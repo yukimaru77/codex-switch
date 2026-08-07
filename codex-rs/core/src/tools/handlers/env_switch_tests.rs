@@ -859,6 +859,12 @@ async fn resolve_tool_environment_uses_env_switch_default_and_explicit_override(
 #[tokio::test]
 async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot() {
     let (session, mut turn) = crate::session::tests::make_session_and_context().await;
+    let environment_config = turn
+        .environments
+        .primary()
+        .expect("primary environment")
+        .config
+        .clone();
     let thread_key = session.thread_id.to_string();
     let manager = &session.services.environment_manager;
     let environment = Arc::new(
@@ -885,6 +891,7 @@ async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot
                 Some(crate::shell::get_shell_by_model_provided_path(
                     &std::path::PathBuf::from("/bin/bash"),
                 )),
+                environment_config,
             ),
         ));
     manager.set_thread_environment_metadata(
