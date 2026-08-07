@@ -571,6 +571,7 @@ async fn start_elicitation_services(
 
 struct ElicitationRoundTripFixture {
     mcp: TestAppServer,
+    _codex_home: TempDir,
     response_mock: ResponseMock,
     _responses_server: wiremock::MockServer,
     scenario: ElicitationScenario,
@@ -748,6 +749,7 @@ impl ElicitationRoundTripFixture {
 
         Ok(Self {
             mcp,
+            _codex_home: codex_home,
             response_mock,
             _responses_server: responses_server,
             scenario,
