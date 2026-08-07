@@ -1270,7 +1270,6 @@ impl UnifiedExecProcessManager {
             )
             .await;
         let req = UnifiedExecToolRequest {
-            environment_id: request.environment_id.clone(),
             command: request.command.clone(),
             shell_type: request.shell_type,
             hook_command: request.hook_command.clone(),
