@@ -7,6 +7,7 @@ use std::fs;
 use std::time::Duration;
 use std::time::Instant;
 
+use codex_features::Feature;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Settings;

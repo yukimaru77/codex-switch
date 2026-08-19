@@ -10,7 +10,6 @@ use crate::session::session::Session;
 use crate::session::step_settings::StepSettingsUpdate;
 use codex_diagnostics::Gauge;
 use codex_diagnostics::GaugeGuard;
-use crate::user_message_admission::UserMessageAdmission;
 use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_exec_server::SelectedCapabilityRootsStatus;
 use codex_extension_api::ConversationHistorySnapshot;
