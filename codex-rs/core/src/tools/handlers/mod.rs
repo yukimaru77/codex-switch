@@ -52,11 +52,11 @@ use serde_json::Value;
 use std::path::Path;
 
 use crate::config::PermissionProfileSnapshot;
+use crate::environment_selection::EnvironmentConfigOrigin;
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::function_tool::FunctionCallError;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
-use crate::session::turn_context::EnvironmentConfig;
 use crate::session::turn_context::TurnContext;
 use crate::session::turn_context::TurnEnvironment;
 pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
@@ -64,6 +64,8 @@ pub(crate) use crate::tools::code_mode::CodeModeWaitHandler;
 pub use apply_patch::ApplyPatchHandler;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::EnvironmentConfig;
+use codex_protocol::protocol::EnvironmentConfigState;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 pub use current_time::CurrentTimeHandler;
 pub use dynamic::DynamicToolHandler;
@@ -250,10 +252,11 @@ fn dynamic_environment_defaults(
                     permission_profile: PermissionProfileSnapshot::legacy(
                         turn.permission_profile(),
                     ),
+                    selected_capability_roots: Vec::new(),
                 },
             )
         },
-        |primary| (primary.workspace_roots().to_vec(), primary.config.clone()),
+        |primary| (primary.workspace_roots().to_vec(), primary.config().clone()),
     )
 }
 
@@ -290,12 +293,15 @@ fn turn_environment_from_env_switch_metadata(
         .map(|shell| crate::shell::shell_for_remote_path(std::path::Path::new(&shell)));
     let (workspace_roots, config) = dynamic_environment_defaults(turn);
     Ok(TurnEnvironment::new(
-        environment_id.to_string(),
+        TurnEnvironmentSelection {
+            environment_id: environment_id.to_string(),
+            cwd: codex_utils_path_uri::PathUri::from_abs_path(&cwd),
+            workspace_roots,
+            config: EnvironmentConfigState::Ready(config),
+        },
+        EnvironmentConfigOrigin::Thread,
         environment,
-        codex_utils_path_uri::PathUri::from_abs_path(&cwd),
-        workspace_roots,
         shell,
-        config,
     ))
 }
 
@@ -350,7 +356,7 @@ pub(crate) async fn resolve_tool_environment(
         if let Some(found) = turn
             .environments
             .turn_environments()
-            .find(|environment| environment.environment_id == LOCAL_ENVIRONMENT_ID)
+            .find(|environment| environment.selection.environment_id == LOCAL_ENVIRONMENT_ID)
         {
             return Ok(Some(found.clone()));
         }
@@ -362,12 +368,15 @@ pub(crate) async fn resolve_tool_environment(
             let cwd = turn.cwd.clone();
             let (workspace_roots, config) = dynamic_environment_defaults(turn);
             return Ok(Some(TurnEnvironment::new(
-                LOCAL_ENVIRONMENT_ID.to_string(),
+                TurnEnvironmentSelection {
+                    environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
+                    cwd: codex_utils_path_uri::PathUri::from_abs_path(&cwd),
+                    workspace_roots,
+                    config: EnvironmentConfigState::Ready(config),
+                },
+                EnvironmentConfigOrigin::Thread,
                 environment,
-                codex_utils_path_uri::PathUri::from_abs_path(&cwd),
-                workspace_roots,
                 None,
-                config,
             )));
         }
         return Err(FunctionCallError::RespondToModel(
@@ -393,15 +402,14 @@ pub(crate) async fn resolve_tool_environment(
     if let Some(found) = turn
         .environments
         .turn_environments()
-        .find(|environment| environment.environment_id == env_id)
+        .find(|environment| environment.selection.environment_id == env_id)
     {
         return Ok(Some(found.clone()));
     }
 
     if let Some(starting) = turn
         .environments
-        .starting
-        .iter()
+        .starting()
         .find(|environment| environment.selection.environment_id == env_id)
     {
         return match starting.resolved() {
@@ -450,7 +458,7 @@ fn default_tool_environment_id_for_snapshot(
     last_env_switch_environment_id(session, turn).or_else(|| {
         environments
             .primary()
-            .map(|environment| environment.environment_id.clone())
+            .map(|environment| environment.selection.environment_id.clone())
             .or_else(|| {
                 environments
                     .starting()
@@ -516,11 +524,16 @@ pub(crate) fn environment_selections_with_default(
         cwd
     };
 
+    let Some(primary_environment) = turn.environments.primary() else {
+        return selections;
+    };
     selections.insert(
         0,
         TurnEnvironmentSelection {
             environment_id: default_environment_id,
             cwd: codex_utils_path_uri::PathUri::from_abs_path(&cwd),
+            workspace_roots: Vec::new(),
+            config: EnvironmentConfigState::Ready(primary_environment.config().clone()),
         },
     );
     selections
@@ -674,6 +687,8 @@ mod tests {
     use super::normalize_and_validate_additional_permissions;
     use super::permissions_are_preapproved;
     use super::resolve_tool_environment;
+    use crate::environment_selection::EnvironmentConfigOrigin;
+    use crate::environment_selection::TurnEnvironmentState;
     use crate::sandboxing::SandboxPermissions;
     use crate::session::turn_context::TurnEnvironment;
     use codex_exec_server::Environment;
@@ -687,7 +702,9 @@ mod tests {
     use codex_protocol::permissions::FileSystemSandboxEntry;
     use codex_protocol::permissions::FileSystemSpecialPath;
     use codex_protocol::protocol::AskForApproval;
+    use codex_protocol::protocol::EnvironmentConfigState;
     use codex_protocol::protocol::GranularApprovalConfig;
+    use codex_protocol::protocol::TurnEnvironmentSelection;
     use codex_sandboxing::policy_transforms::intersect_permission_profiles;
     use codex_sandboxing::policy_transforms::merge_permission_profiles;
     use codex_utils_absolute_path::AbsolutePathBuf;
@@ -765,28 +782,32 @@ mod tests {
         let (session, mut turn) = crate::session::tests::make_session_and_context().await;
         let local = turn
             .environments
-            .turn_environments
-            .first()
+            .turn_environments()
+            .next()
             .expect("local turn environment")
             .clone();
+        let mut remote_selection = local.selection.clone();
+        remote_selection.environment_id = "remote".to_string();
         let remote = TurnEnvironment::new(
-            "remote".to_string(),
+            remote_selection,
+            EnvironmentConfigOrigin::Thread,
             Arc::new(
                 Environment::create_for_tests(Some("ws://127.0.0.1:8765".to_string()))
                     .expect("remote environment"),
             ),
-            local.cwd().clone(),
             None,
-            local.config.clone(),
         );
-        turn.environments.turn_environments = vec![remote, local];
+        turn.environments.environments = vec![
+            TurnEnvironmentState::Ready(remote),
+            TurnEnvironmentState::Ready(local),
+        ];
 
         let resolved = resolve_tool_environment(&session, &turn, Some(LOCAL_ENVIRONMENT_ID))
             .await
             .expect("local should resolve")
             .expect("local environment");
 
-        assert_eq!(resolved.environment_id, LOCAL_ENVIRONMENT_ID);
+        assert_eq!(resolved.selection.environment_id, LOCAL_ENVIRONMENT_ID);
         assert!(!resolved.environment.is_remote());
     }
 
@@ -799,14 +820,14 @@ mod tests {
             .expect("primary environment")
             .cwd()
             .clone();
-        turn.environments.turn_environments = Vec::new();
+        turn.environments.environments = Vec::new();
 
         let resolved = resolve_tool_environment(&session, &turn, Some(LOCAL_ENVIRONMENT_ID))
             .await
             .expect("local should resolve")
             .expect("local environment");
 
-        assert_eq!(resolved.environment_id, LOCAL_ENVIRONMENT_ID);
+        assert_eq!(resolved.selection.environment_id, LOCAL_ENVIRONMENT_ID);
         assert_eq!(resolved.cwd(), &local_cwd);
         assert!(!resolved.environment.is_remote());
     }
@@ -839,7 +860,7 @@ mod tests {
             .expect("resolution should succeed")
             .expect("environment should resolve");
 
-        assert_eq!(resolved.environment_id, "ssh:mine");
+        assert_eq!(resolved.selection.environment_id, "ssh:mine");
         assert_eq!(
             resolved.cwd().to_abs_path().expect("absolute cwd"),
             AbsolutePathBuf::from_absolute_path("/remote/home").expect("remote cwd")
@@ -925,6 +946,7 @@ mod tests {
                         .expect("old cwd")
                         .into(),
                     config: EnvironmentConfigState::Ready(environment_config),
+                    workspace_roots: Vec::new(),
                 },
                 EnvironmentConfigOrigin::Thread,
                 Arc::new(

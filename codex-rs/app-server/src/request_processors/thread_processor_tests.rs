@@ -70,6 +70,7 @@ mod persisted_resume_approval_policy_tests {
                     approvals_reviewer: ApprovalsReviewer::User,
                     permission_profile: PermissionProfile::read_only(),
                     active_permission_profile: None,
+                    active_environment_id: None,
                     cwd: cwd(),
                     reasoning_effort: None,
                     reasoning_summary: None,

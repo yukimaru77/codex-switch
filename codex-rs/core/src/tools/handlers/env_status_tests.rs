@@ -342,7 +342,7 @@ async fn status_uses_thread_specific_metadata_when_available() {
 #[tokio::test]
 async fn status_local_fallback_has_cwd_but_is_not_selected_for_turn() {
     let (session, mut turn) = crate::session::tests::make_session_and_context().await;
-    turn.environments.turn_environments.clear();
+    turn.environments.environments.clear();
     let manager = &session.services.environment_manager;
     let thread_key = session.thread_id.to_string();
     manager.record_thread_environment_id(

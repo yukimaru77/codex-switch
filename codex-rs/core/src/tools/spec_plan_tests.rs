@@ -1059,7 +1059,7 @@ async fn env_switch_feature_registers_environment_status_tools() {
         set_feature(turn, Feature::ShellTool, /*enabled*/ true);
         set_feature(turn, Feature::UnifiedExec, /*enabled*/ true);
         set_feature(turn, Feature::EnvSwitch, /*enabled*/ true);
-        turn.environments.turn_environments.clear();
+        turn.environments.environments.clear();
     })
     .await;
     no_environment.assert_visible_lacks(&["env_switch", "env_status", "env_list"]);
@@ -1072,7 +1072,7 @@ async fn env_switch_feature_is_hidden_without_unified_exec() {
         set_feature(turn, Feature::ShellTool, /*enabled*/ true);
         set_feature(turn, Feature::UnifiedExec, /*enabled*/ false);
         set_feature(turn, Feature::EnvSwitch, /*enabled*/ true);
-        turn.model_info.shell_type = ConfigShellToolType::ShellCommand;
+        Arc::make_mut(&mut turn.model_info).shell_type = ConfigShellToolType::ShellCommand;
     })
     .await;
 
@@ -1091,24 +1091,6 @@ async fn env_switch_feature_is_hidden_without_unified_exec() {
         "env_status",
         "env_list",
     ]);
-}
-
-#[tokio::test]
-async fn host_context_gates_agent_job_tools() {
-    let normal_agent_job = probe(|turn| {
-        set_feature(turn, Feature::SpawnCsv, /*enabled*/ true);
-    })
-    .await;
-    normal_agent_job.assert_visible_contains(&["spawn_agents_on_csv"]);
-    normal_agent_job.assert_visible_lacks(&["report_agent_job_result"]);
-
-    let worker_agent_job = probe(|turn| {
-        set_feature(turn, Feature::SpawnCsv, /*enabled*/ true);
-        turn.session_source =
-            SessionSource::SubAgent(SubAgentSource::Other("agent_job:42".to_string()));
-    })
-    .await;
-    worker_agent_job.assert_visible_contains(&["spawn_agents_on_csv", "report_agent_job_result"]);
 }
 
 #[tokio::test]

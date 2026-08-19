@@ -4,6 +4,7 @@
 use super::session::Session;
 use super::session::SessionSettingsUpdate;
 use crate::config::ConstraintResult;
+use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::Event;
@@ -109,7 +110,27 @@ pub(super) async fn emit_applied(session: &Session, submission_id: String) {
 /// synthesized fork history.
 pub(super) async fn applied_event(session: &Session) -> EventMsg {
     let snapshot = session.thread_config_snapshot().await;
-    EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent {
-        thread_settings: snapshot.into_thread_settings_snapshot(),
-    })
+    let parent_thread_id = {
+        let state = session.state.lock().await;
+        state.session_configuration.parent_thread_id
+    };
+    let active_environment_id = [Some(session.thread_id), parent_thread_id]
+        .into_iter()
+        .flatten()
+        .find_map(|thread_id| {
+            session
+                .services
+                .environment_manager
+                .get_last_environment_id(&thread_id.to_string())
+        })
+        .or_else(|| {
+            snapshot
+                .environment_selections()
+                .first()
+                .map(|selection| selection.environment_id.clone())
+        })
+        .filter(|environment_id| environment_id != LOCAL_ENVIRONMENT_ID);
+    let mut thread_settings = snapshot.into_thread_settings_snapshot();
+    thread_settings.active_environment_id = active_environment_id;
+    EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent { thread_settings })
 }

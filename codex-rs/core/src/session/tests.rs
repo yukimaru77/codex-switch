@@ -7202,6 +7202,8 @@ async fn remote_environment_selection_does_not_retarget_turn_context_cwd() {
                         TurnEnvironmentSelection {
                             environment_id: "ssh:mine".to_string(),
                             cwd: PathUri::from_abs_path(&remote_cwd),
+                            workspace_roots: Vec::new(),
+                            config: EnvironmentConfigState::FromThread,
                         },
                         local(local_cwd.clone()),
                     ],
@@ -7213,11 +7215,9 @@ async fn remote_environment_selection_does_not_retarget_turn_context_cwd() {
         .expect("turn should start");
 
     let selected_environment = session
-        .state
-        .lock()
-        .await
-        .session_configuration
-        .environment_selections()
+        .services
+        .turn_environments
+        .selections()
         .first()
         .cloned()
         .expect("remote environment selection should be preserved");
