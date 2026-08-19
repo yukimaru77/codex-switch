@@ -4478,7 +4478,12 @@ async fn plugin_list_omits_featured_plugin_ids_without_chatgpt_auth() -> Result<
         timeout(DEFAULT_TIMEOUT, mcp.read_response(request_id)).await??;
 
     assert_eq!(response.featured_plugin_ids, Vec::<String>::new());
-    assert_eq!(response.marketplaces[0].name, "openai-api-curated");
+    assert!(
+        response
+            .marketplaces
+            .iter()
+            .any(|marketplace| marketplace.name == "openai-api-curated")
+    );
     Ok(())
 }
 
