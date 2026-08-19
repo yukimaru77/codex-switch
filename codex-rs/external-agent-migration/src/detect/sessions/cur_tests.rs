@@ -8,8 +8,7 @@ use std::time::SystemTime;
 use tempfile::TempDir;
 
 fn temp_dir_in_test_workspace() -> TempDir {
-    let current_dir = std::env::current_dir().expect("current dir");
-    TempDir::new_in(current_dir).expect("tempdir")
+    TempDir::new().expect("tempdir")
 }
 
 #[test]

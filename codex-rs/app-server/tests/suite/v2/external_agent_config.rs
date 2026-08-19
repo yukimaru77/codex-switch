@@ -456,7 +456,7 @@ async fn external_agent_config_import_source_remains_attribution_only() -> Resul
 #[tokio::test]
 async fn external_agent_config_secondary_source_imports_session_and_plugin_end_to_end() -> Result<()>
 {
-    let codex_home = TempDir::new_in(std::env::current_dir()?)?;
+    let codex_home = TempDir::new()?;
     let source_home = secondary_external_agent_home(codex_home.path());
     let project_root = codex_home.path().join("my-project");
     std::fs::create_dir_all(&project_root)?;
