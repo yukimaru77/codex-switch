@@ -1648,10 +1648,7 @@ impl Session {
     /// Passing `environment_id = LOCAL_ENVIRONMENT_ID` (or an empty string)
     /// clears the non-local badge and makes the status line show the local cwd.
     pub(crate) async fn emit_dynamic_environment_badge(&self, environment_id: &str) {
-        let snapshot = {
-            let state = self.state.lock().await;
-            state.session_configuration.thread_config_snapshot()
-        };
+        let snapshot = self.thread_config_snapshot().await;
         let cwd = snapshot.cwd().clone();
         let active_environment_id =
             if environment_id.is_empty() || environment_id == LOCAL_ENVIRONMENT_ID {
@@ -2714,93 +2711,6 @@ impl Session {
             }
             response = rx_response => response.ok(),
         }
-    }
-
-    pub(crate) async fn request_permissions_for_cwd(
-        self: &Arc<Self>,
-        turn_context: &Arc<TurnContext>,
-        call_id: String,
-        args: RequestPermissionsArgs,
-        cwd: AbsolutePathBuf,
-        cancellation_token: CancellationToken,
-    ) -> Option<RequestPermissionsResponse> {
-        let selected_environment_id = args
-            .environment_id
-            .clone()
-            .or_else(|| {
-                [Some(self.thread_id), turn_context.parent_thread_id]
-                    .into_iter()
-                    .flatten()
-                    .find_map(|thread_id| {
-                        self.services
-                            .environment_manager
-                            .get_last_environment_id(&thread_id.to_string())
-                    })
-            })
-            .or_else(|| {
-                turn_context
-                    .environments
-                    .primary()
-                    .map(|environment| environment.environment_id.clone())
-            });
-        let Some(selected_environment_id) = selected_environment_id else {
-            return Some(RequestPermissionsResponse {
-                permissions: RequestPermissionProfile::default(),
-                scope: PermissionGrantScope::Turn,
-                strict_auto_review: false,
-            });
-        };
-        let mut environment = if let Some(turn_environment) = turn_context
-            .environments
-            .turn_environments()
-            .find(|environment| environment.environment_id == selected_environment_id)
-        {
-            turn_environment.selection()
-        } else if selected_environment_id == LOCAL_ENVIRONMENT_ID {
-            if self
-                .services
-                .environment_manager
-                .try_local_environment()
-                .is_none()
-            {
-                return Some(RequestPermissionsResponse {
-                    permissions: RequestPermissionProfile::default(),
-                    scope: PermissionGrantScope::Turn,
-                    strict_auto_review: false,
-                });
-            }
-            TurnEnvironmentSelection {
-                environment_id: selected_environment_id,
-                cwd: PathUri::from_abs_path(&cwd),
-                workspace_roots: Vec::new(),
-            }
-        } else if self
-            .services
-            .environment_manager
-            .get_environment(&selected_environment_id)
-            .is_some()
-        {
-            TurnEnvironmentSelection {
-                environment_id: selected_environment_id,
-                cwd: PathUri::from_abs_path(&cwd),
-                workspace_roots: Vec::new(),
-            }
-        } else {
-            return Some(RequestPermissionsResponse {
-                permissions: RequestPermissionProfile::default(),
-                scope: PermissionGrantScope::Turn,
-                strict_auto_review: false,
-            });
-        };
-        environment.cwd = PathUri::from_abs_path(&cwd);
-        self.request_permissions_for_environment(
-            turn_context,
-            call_id,
-            args,
-            environment,
-            cancellation_token,
-        )
-        .await
     }
 
     #[expect(

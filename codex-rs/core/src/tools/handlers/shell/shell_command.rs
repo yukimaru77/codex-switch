@@ -196,6 +196,7 @@ impl ShellCommandHandler {
         let ToolInvocation {
             session,
             turn,
+            step_context,
             cancellation_token,
             tracker,
             call_id,
@@ -278,7 +279,6 @@ impl ShellCommandHandler {
             advisory,
             session,
             step_context,
-            turn_environment,
             tracker,
             call_id,
             shell_runtime_backend: self.shell_runtime_backend(),

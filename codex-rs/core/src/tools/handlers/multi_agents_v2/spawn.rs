@@ -158,7 +158,7 @@ async fn handle_spawn_agent(
                     root_turn_id: turn.turn_metadata_state.root_turn_id(),
                     environments: Some(environment_selections_with_default(
                         &session,
-                        &turn,
+                        turn,
                         &step_context.environments,
                     )),
                     multi_agent_v2_usage_hints,

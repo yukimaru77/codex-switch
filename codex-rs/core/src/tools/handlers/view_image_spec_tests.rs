@@ -12,6 +12,7 @@ fn view_image_tool_omits_environment_id_by_default() {
     let tool = create_view_image_tool(ViewImageToolOptions {
         can_request_original_image_detail: false,
         include_environment_id: false,
+        unified_image_budget: false,
     });
 
     assert!(!has_parameter(&tool, "environment_id"));
@@ -23,6 +24,7 @@ fn view_image_tool_includes_environment_id_when_requested() {
     let tool = create_view_image_tool(ViewImageToolOptions {
         can_request_original_image_detail: true,
         include_environment_id: true,
+        unified_image_budget: false,
     });
 
     assert!(has_parameter(&tool, "environment_id"));

@@ -113,6 +113,7 @@ impl ExecCommandHandler {
         let ToolInvocation {
             session,
             turn,
+            step_context,
             tracker,
             call_id,
             payload,
@@ -423,7 +424,7 @@ impl ExecCommandHandler {
                 if environment.is_remote() && message.contains("transport disconnected") {
                     message.push_str(&format!(
                         " — environment `{}` lost its exec-server connection; retry once, and if it still fails run env_switch again for this target to re-provision it",
-                        turn_environment.environment_id
+                        turn_environment.selection.environment_id
                     ));
                 }
                 Err(FunctionCallError::RespondToModel(message))

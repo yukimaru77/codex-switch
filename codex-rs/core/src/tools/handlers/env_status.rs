@@ -115,11 +115,10 @@ fn build_env_status_output(session: &Session, turn: &TurnContext) -> EnvStatusOu
     let environment_manager = &session.services.environment_manager;
     let mut turn_environments = turn
         .environments
-        .turn_environments
-        .iter()
+        .turn_environments()
         .map(|environment| {
             (
-                environment.environment_id.clone(),
+                environment.selection.environment_id.clone(),
                 TurnEnvironmentStatus {
                     cwd: environment.cwd().inferred_native_path_string(),
                     shell: environment

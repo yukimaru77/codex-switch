@@ -400,9 +400,6 @@ impl InputQueue {
                 None => (false, true),
             }
         };
-        if has_turn_pending_input {
-            return true;
-        }
         // Monitor events always count as pending, even when mailbox
         // delivery is deferred to the next turn.
         if !self.monitor_pending_events.lock().await.is_empty() {
@@ -410,6 +407,9 @@ impl InputQueue {
         }
         if !accepts_mailbox_delivery {
             return false;
+        }
+        if has_turn_pending_input {
+            return true;
         }
         self.has_pending_mailbox_items().await
     }
@@ -738,7 +738,11 @@ mod tests {
             false,
         );
         input_queue
-            .enqueue_mailbox_communication(mail.clone(), /*parent_turn_id*/ None)
+            .enqueue_mailbox_communication(
+                mail.clone(),
+                /*parent_turn_id*/ None,
+                /*root_turn_id*/ None,
+            )
             .await;
         let event = make_monitor_event("test", "event", /*wake*/ false);
         input_queue.enqueue_monitor_event(event.clone()).await;
@@ -784,6 +788,7 @@ mod tests {
                     /*trigger_turn*/ false,
                 ),
                 /*parent_turn_id*/ None,
+                /*root_turn_id*/ None,
             )
             .await;
         assert!(!input_queue.has_pending_input(&active_turn).await);

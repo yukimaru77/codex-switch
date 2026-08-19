@@ -10,20 +10,19 @@ use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentConnectionState;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerError;
-use codex_exec_server::ExecutorFileSystem;
 use codex_exec_server::SelectedCapabilityRootsStatus;
 use codex_protocol::capabilities::CapabilityRootLocation;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
 use codex_protocol::models::PermissionProfile;
+#[cfg(test)]
+use codex_protocol::error::CodexErr;
+#[cfg(test)]
+use codex_protocol::error::Result as CodexResult;
 use codex_protocol::protocol::EnvironmentConfig;
 use codex_protocol::protocol::EnvironmentConfigState;
 use codex_protocol::protocol::EnvironmentConnectionEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
-#[cfg(test)]
-use codex_protocol::error::CodexErr;
-#[cfg(test)]
-use codex_protocol::error::Result as CodexResult;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;
@@ -159,12 +158,10 @@ impl StartingTurnEnvironment {
         match self.resolution.clone().now_or_never()? {
             Ok(environment) => {
                 let mut turn_environment = TurnEnvironment::new(
-                    self.selection.environment_id.clone(),
+                    self.selection.clone(),
+                    self.config_origin,
                     environment.environment,
-                    self.selection.cwd.clone(),
-                    self.selection.workspace_roots.clone(),
                     environment.shell,
-                    self.config.clone(),
                 );
                 turn_environment.shell_snapshot = environment.shell_snapshot;
                 Some(Ok(turn_environment))
@@ -838,6 +835,7 @@ fn test_environment_config() -> EnvironmentConfig {
         permission_profile: crate::config::PermissionProfileSnapshot::legacy(
             codex_protocol::models::PermissionProfile::read_only(),
         ),
+        selected_capability_roots: Vec::new(),
     }
 }
 
@@ -1222,6 +1220,8 @@ url = "ws://127.0.0.1:8765"
             &[TurnEnvironmentSelection {
                 environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
                 cwd: cwd_uri,
+                workspace_roots: Vec::new(),
+                config: EnvironmentConfigState::FromThread,
             }],
         )
         .expect("remote environment should resolve");

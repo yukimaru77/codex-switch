@@ -22,8 +22,8 @@ use super::hop_from_arg;
 use super::implicit_base_launcher;
 use super::resolve_remote_cwd_script;
 use super::validate_addressing_mode;
-use crate::environment_selection::TurnEnvironmentState;
 use crate::environment_selection::EnvironmentConfigOrigin;
+use crate::environment_selection::TurnEnvironmentState;
 use crate::tools::handlers::environment_thread_keys;
 use crate::tools::handlers::resolve_tool_environment;
 
@@ -701,7 +701,7 @@ async fn local_switch_records_status_and_clears_remote_cursor() {
         .expect("omitted environment_id should resolve")
         .expect("local environment");
     assert_eq!(
-        resolved.environment_id,
+        resolved.selection.environment_id,
         codex_exec_server::LOCAL_ENVIRONMENT_ID
     );
     assert!(!resolved.environment.is_remote());
@@ -820,7 +820,7 @@ async fn resolve_tool_environment_uses_env_switch_default_and_explicit_override(
         .await
         .expect("implicit default should resolve")
         .expect("implicit environment");
-    assert_eq!(implicit.environment_id, "ssh:mine");
+    assert_eq!(implicit.selection.environment_id, "ssh:mine");
     assert_eq!(
         implicit.cwd().to_abs_path().expect("native cwd").as_path(),
         std::path::Path::new("/mine")
@@ -838,7 +838,7 @@ async fn resolve_tool_environment_uses_env_switch_default_and_explicit_override(
         .await
         .expect("explicit override should resolve")
         .expect("explicit environment");
-    assert_eq!(explicit.environment_id, "docker:other");
+    assert_eq!(explicit.selection.environment_id, "docker:other");
     assert_eq!(
         explicit.cwd().to_abs_path().expect("native cwd").as_path(),
         std::path::Path::new("/other")
@@ -853,7 +853,7 @@ async fn resolve_tool_environment_uses_env_switch_default_and_explicit_override(
     .expect("explicit local should resolve")
     .expect("local environment");
     assert_eq!(
-        local.environment_id,
+        local.selection.environment_id,
         codex_exec_server::LOCAL_ENVIRONMENT_ID
     );
     assert!(!local.environment.is_remote());
@@ -866,7 +866,7 @@ async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot
         .environments
         .primary()
         .expect("primary environment")
-        .config
+        .config()
         .clone();
     let thread_key = session.thread_id.to_string();
     let manager = &session.services.environment_manager;
@@ -891,6 +891,7 @@ async fn implicit_env_switch_default_prefers_current_metadata_over_turn_snapshot
                         .expect("old cwd")
                         .into(),
                     config: EnvironmentConfigState::Ready(environment_config),
+                    workspace_roots: Vec::new(),
                 },
                 EnvironmentConfigOrigin::Thread,
                 environment,
