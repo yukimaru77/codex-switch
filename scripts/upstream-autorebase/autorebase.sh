@@ -251,7 +251,7 @@ ensure_build_space() {
     esac
     if [ "$_available_kb" -lt "$MIN_FREE_KB" ]; then
         log "Only ${_available_kb} KiB free; cleaning shared cargo target $CARGO_TARGET_DIR"
-        cargo clean --target-dir "$CARGO_TARGET_DIR" || return 1
+        (cd "$WT/codex-rs" && cargo clean --target-dir "$CARGO_TARGET_DIR") || return 1
     fi
 }
 
