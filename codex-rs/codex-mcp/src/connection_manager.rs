@@ -99,14 +99,10 @@ impl McpServerConnection {
         if client.client.is_closed().await {
             return None;
         }
+        if current.uses_oauth_store() && matches!(desired.oauth_credentials(), Ok(None)) {
+            return None;
+        }
         if current == desired {
-            if matches!(desired.oauth_credentials(), Ok(None))
-                && tokio::time::timeout(Duration::ZERO, client.client.managed_oauth_credentials())
-                    .await
-                    .is_ok_and(|credentials| matches!(credentials, Some(Some(_))))
-            {
-                return None;
-            }
             return Some(client);
         }
         let Ok(desired_credentials) = desired.oauth_credentials() else {
