@@ -953,6 +953,7 @@ impl Session {
         git_enrichment_policy: GitEnrichmentPolicy,
     ) -> Arc<TurnContext> {
         let turn_environments = self.services.turn_environments.snapshot().await;
+        let primary_turn_environment = turn_environments.primary();
         let cwd = turn_environments
             .single_local_environment_cwd()
             .unwrap_or_else(|| session_configuration.cwd().clone());

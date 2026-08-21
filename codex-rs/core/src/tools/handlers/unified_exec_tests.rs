@@ -126,9 +126,10 @@ fn test_get_command_resolves_powershell_by_type() -> anyhow::Result<()> {
     .map_err(anyhow::Error::msg)?;
     let expected_shell = get_shell(ShellType::PowerShell)
         .unwrap_or_else(|| codex_shell_command::shell_detect::ultimate_fallback_shell().into());
+    let use_login_shell = expected_shell.shell_type != ShellType::Sh;
     assert_eq!(
         resolved.command,
-        expected_shell.derive_exec_args("echo hello", /*use_login_shell*/ true)
+        expected_shell.derive_exec_args("echo hello", use_login_shell)
     );
     assert_eq!(resolved.shell_type, expected_shell.shell_type);
     Ok(())
