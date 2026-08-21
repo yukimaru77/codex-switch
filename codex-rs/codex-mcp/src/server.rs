@@ -269,6 +269,10 @@ impl McpServerConnectionIdentity {
         })
     }
 
+    pub(crate) fn uses_oauth_store(&self) -> bool {
+        self.oauth_store.is_some()
+    }
+
     pub(crate) fn oauth_credentials_changed(
         &self,
         server_name: &str,
