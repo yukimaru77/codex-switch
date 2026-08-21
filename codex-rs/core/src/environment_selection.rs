@@ -13,11 +13,11 @@ use codex_exec_server::ExecServerError;
 use codex_exec_server::SelectedCapabilityRootsStatus;
 use codex_protocol::capabilities::CapabilityRootLocation;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
-use codex_protocol::models::PermissionProfile;
 #[cfg(test)]
 use codex_protocol::error::CodexErr;
 #[cfg(test)]
 use codex_protocol::error::Result as CodexResult;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::EnvironmentConfig;
 use codex_protocol::protocol::EnvironmentConfigState;
 use codex_protocol::protocol::EnvironmentConnectionEvent;
@@ -574,13 +574,6 @@ impl ThreadEnvironments {
             match environment.info().await {
                 Ok(info) => match Shell::from_environment_shell_info(info.shell) {
                     Ok(shell) => Some(shell),
-                        Err(err) => {
-                            tracing::warn!(
-                                "failed to resolve shell for environment `{environment_id}`: {err}"
-                            );
-                            None
-                        }
-                    },
                     Err(err) => {
                         tracing::warn!(
                             "failed to resolve shell for environment `{environment_id}`: {err}"
@@ -835,6 +828,10 @@ fn test_environment_config() -> EnvironmentConfig {
         permission_profile: crate::config::PermissionProfileSnapshot::legacy(
             codex_protocol::models::PermissionProfile::read_only(),
         ),
+        shell_environment_policy: Default::default(),
+        exec_policy: None,
+        mcp_policy: None,
+        network_policy: None,
         selected_capability_roots: Vec::new(),
     }
 }

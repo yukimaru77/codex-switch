@@ -36,6 +36,7 @@ fn settings_item(
                 approvals_reviewer,
                 permission_profile: PermissionProfile::read_only(),
                 active_permission_profile,
+                active_environment_id: None,
                 cwd: cwd(),
                 reasoning_effort: None,
                 reasoning_summary: None,

@@ -294,7 +294,6 @@ fn write_permissions_for_paths(
 fn verification_permissions_for_approved_paths(
     file_paths: &[AbsolutePathBuf],
 ) -> Option<AdditionalPermissionProfile> {
-    let read_roots = file_paths.to_vec();
     let write_roots = file_paths
         .iter()
         .map(|path| path.parent().unwrap_or_else(|| path.clone()))
@@ -303,7 +302,7 @@ fn verification_permissions_for_approved_paths(
         .collect::<Vec<_>>();
     normalize_additional_permissions(AdditionalPermissionProfile {
         file_system: Some(FileSystemPermissions::from_read_write_roots(
-            Some(read_roots),
+            Some(vec![]),
             Some(write_roots),
         )),
         ..Default::default()
@@ -351,9 +350,10 @@ async fn effective_patch_permissions(
         .iter()
         .map(PathUri::to_abs_path)
         .collect::<Result<Vec<_>, _>>()?;
+    let requested_path_permissions =
+        write_permissions_for_paths(&native_file_paths, &file_system_sandbox_policy, &native_cwd);
     let requested_permissions = merge_permission_profiles(
-        write_permissions_for_paths(&native_file_paths, &file_system_sandbox_policy, &native_cwd)
-            .as_ref(),
+        requested_path_permissions.as_ref(),
         approved_permissions.as_ref(),
     );
     let effective_additional_permissions = apply_granted_turn_permissions(
@@ -432,10 +432,12 @@ async fn patch_verification_permissions(
     environment_id: &str,
     file_paths: &[PathUri],
 ) -> Option<AdditionalPermissionProfile> {
-    let granted_permissions = granted_patch_permissions(session, environment_id).await;
-    let approved_permissions =
-        approved_session_patch_permissions(session, environment_id, file_paths).await;
-    merge_permission_profiles(granted_permissions.as_ref(), approved_permissions.as_ref())
+    // Verification is read-only and must use the turn's base sandbox until a
+    // patch-specific approval expands it. Request-permission grants may carry
+    // deny entries that constrain the granted authority; applying those here
+    // would prevent us from verifying the patch and issuing the required
+    // fresh approval for a denied child path.
+    approved_session_patch_permissions(session, environment_id, file_paths).await
 }
 
 async fn patch_verification_sandbox(

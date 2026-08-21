@@ -43,7 +43,6 @@ mod wait_for_environment;
 
 use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_sandboxing::policy_transforms::materialize_additional_permissions;
-use codex_sandboxing::policy_transforms::intersect_permission_profiles;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use codex_sandboxing::policy_transforms::normalize_additional_permissions;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -255,6 +254,10 @@ fn dynamic_environment_defaults(
                     permission_profile: PermissionProfileSnapshot::legacy(
                         turn.permission_profile(),
                     ),
+                    shell_environment_policy: Default::default(),
+                    exec_policy: None,
+                    mcp_policy: None,
+                    network_policy: None,
                     selected_capability_roots: Vec::new(),
                 },
             )
@@ -715,7 +718,6 @@ mod tests {
     use super::implicit_granted_permissions;
     use super::normalize_and_validate_additional_permissions;
     use super::preapproved_permission_profile;
-    use super::permissions_are_preapproved;
     use super::resolve_tool_environment;
     use crate::environment_selection::EnvironmentConfigOrigin;
     use crate::environment_selection::TurnEnvironmentState;

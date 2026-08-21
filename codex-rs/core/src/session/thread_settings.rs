@@ -109,7 +109,7 @@ pub(super) async fn emit_applied(session: &Session, submission_id: String) {
 /// Builds the thread-owned settings event used by live updates and
 /// synthesized fork history.
 pub(super) async fn applied_event(session: &Session) -> EventMsg {
-    let snapshot = session.thread_config_snapshot().await;
+    let mut thread_settings = session.thread_settings_snapshot().await;
     let parent_thread_id = {
         let state = session.state.lock().await;
         state.session_configuration.parent_thread_id
@@ -123,14 +123,8 @@ pub(super) async fn applied_event(session: &Session) -> EventMsg {
                 .environment_manager
                 .get_last_environment_id(&thread_id.to_string())
         })
-        .or_else(|| {
-            snapshot
-                .environment_selections()
-                .first()
-                .map(|selection| selection.environment_id.clone())
-        })
+        .or_else(|| thread_settings.active_environment_id.clone())
         .filter(|environment_id| environment_id != LOCAL_ENVIRONMENT_ID);
-    let mut thread_settings = snapshot.into_thread_settings_snapshot();
     thread_settings.active_environment_id = active_environment_id;
     EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent { thread_settings })
 }
