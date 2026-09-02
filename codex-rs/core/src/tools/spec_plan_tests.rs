@@ -1345,24 +1345,22 @@ async fn env_switch_feature_registers_environment_status_tools() {
 }
 
 #[tokio::test]
-async fn env_switch_feature_is_hidden_without_unified_exec() {
-    let legacy_shell_only = probe(|turn| {
+async fn env_switch_feature_registers_exec_tools_without_unified_exec() {
+    let one_shot_exec = probe(|turn| {
         set_feature(turn, Feature::ShellTool, /*enabled*/ true);
         set_feature(turn, Feature::UnifiedExec, /*enabled*/ false);
         set_feature(turn, Feature::EnvSwitch, /*enabled*/ true);
-        Arc::make_mut(&mut turn.model_info).shell_type = ConfigShellToolType::ShellCommand;
     })
     .await;
 
-    legacy_shell_only.assert_visible_contains(&["shell_command"]);
-    legacy_shell_only.assert_visible_lacks(&[
+    one_shot_exec.assert_visible_contains(&[
         "exec_command",
         "write_stdin",
         "env_switch",
         "env_status",
         "env_list",
     ]);
-    legacy_shell_only.assert_registered_lacks(&[
+    one_shot_exec.assert_registered_contains(&[
         "exec_command",
         "write_stdin",
         "env_switch",

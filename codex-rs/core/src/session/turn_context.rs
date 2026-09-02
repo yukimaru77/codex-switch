@@ -573,6 +573,8 @@ impl TurnContext {
             permissions: permissions.into(),
             cwd: Some(environment.cwd().clone()),
             workspace_roots: environment.workspace_roots().to_vec(),
+            user_home_dir: environment.user_home_dir.clone(),
+            temporary_directories: environment.temporary_directories.clone(),
             windows_sandbox_level: executor_windows_sandbox_level(
                 self.windows_sandbox_level,
                 environment.cwd(),

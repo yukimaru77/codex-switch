@@ -1839,6 +1839,7 @@ async fn refreshed_snapshot_session_keeps_env_switch_badge_update_for_replay() {
             session: test_thread_session(thread_id, test_path_buf("/tmp/local-project")),
             turns: Vec::new(),
             blocks_direct_input: false,
+            task_tools_available: false,
         },
         &mut snapshot,
     )

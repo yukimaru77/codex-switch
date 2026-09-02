@@ -3,6 +3,7 @@ use super::step_settings::ResolvedStepSettings;
 use super::step_settings::StepSettings;
 use super::step_settings::StepSettingsUpdate;
 pub(crate) use super::step_settings::tests::update_selected_settings_for_test;
+use super::turn_context::NewTurnContextOptions;
 use super::turn_context::TurnEnvironment;
 use super::*;
 use crate::agents_md_manager::AgentsMdManager;
@@ -7846,7 +7847,7 @@ async fn remote_environment_selection_does_not_retarget_turn_context_cwd() {
             },
         );
 
-    let turn_context = session
+    let (turn_context, _) = session
         .new_turn_with_sub_id(
             "sub-remote".to_string(),
             SessionSettingsUpdate {
@@ -7864,6 +7865,7 @@ async fn remote_environment_selection_does_not_retarget_turn_context_cwd() {
                 }),
                 ..Default::default()
             },
+            NewTurnContextOptions::default(),
         )
         .await
         .expect("turn should start");

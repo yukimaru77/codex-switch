@@ -891,7 +891,6 @@ async fn unified_exec_advises_env_switch_after_raw_ssh_inner() -> Result<()> {
     let server = start_mock_server().await;
 
     let mut builder = test_codex().with_model("gpt-5.2").with_config(|config| {
-        config.use_experimental_unified_exec_tool = true;
         config
             .features
             .enable(Feature::UnifiedExec)
@@ -969,7 +968,6 @@ async fn unified_exec_advises_env_switch_with_explicit_environment_id_inner() ->
     let server = start_mock_server().await;
 
     let mut builder = test_codex().with_model("gpt-5.2").with_config(|config| {
-        config.use_experimental_unified_exec_tool = true;
         config
             .features
             .enable(Feature::UnifiedExec)

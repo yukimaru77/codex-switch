@@ -1761,6 +1761,7 @@ impl Session {
                 Some(environment_id.to_string())
             };
         let msg = EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent {
+            thread_id: Some(self.thread_id()),
             thread_settings: ThreadSettingsSnapshot {
                 model: snapshot.model,
                 model_provider_id: snapshot.model_provider_id,

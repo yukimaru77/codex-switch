@@ -275,6 +275,10 @@ impl SessionConfiguration {
         &self,
         environment_selections: &[TurnEnvironmentSelection],
     ) -> ThreadSettingsSnapshot {
+        let active_environment_id = environment_selections
+            .first()
+            .map(|selection| selection.environment_id.clone())
+            .filter(|environment_id| environment_id != codex_exec_server::LOCAL_ENVIRONMENT_ID);
         ThreadSettingsSnapshot {
             model: self.step_settings.collaboration_mode.model().to_string(),
             model_provider_id: self.original_config_do_not_use.model_provider_id.clone(),
@@ -283,6 +287,7 @@ impl SessionConfiguration {
             approvals_reviewer: self.step_settings.approvals_reviewer,
             permission_profile: self.materialized_permission_profile(environment_selections),
             active_permission_profile: self.active_permission_profile(),
+            active_environment_id,
             cwd: self.legacy_fallback_cwd.clone(),
             reasoning_effort: self.step_settings.collaboration_mode.reasoning_effort(),
             reasoning_summary: self.step_settings.reasoning_summary,

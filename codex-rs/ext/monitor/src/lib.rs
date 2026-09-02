@@ -181,7 +181,7 @@ fn validate_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-impl ToolExecutor<ToolCall> for MonitorToolExecutor {
+impl<'call> ToolExecutor<ToolCall<'call>> for MonitorToolExecutor {
     fn tool_name(&self) -> ToolName {
         ToolName::new(
             None,
@@ -201,7 +201,13 @@ impl ToolExecutor<ToolCall> for MonitorToolExecutor {
         }
     }
 
-    fn handle(&self, invocation: ToolCall) -> codex_extension_api::ToolExecutorFuture<'_> {
+    fn handle<'a>(
+        &'a self,
+        invocation: ToolCall<'call>,
+    ) -> codex_extension_api::ToolExecutorFuture<'a>
+    where
+        'call: 'a,
+    {
         let state = Arc::clone(&self.state);
         let kind = self.kind;
         Box::pin(async move {
@@ -547,7 +553,7 @@ impl ToolContributor for MonitorExtension {
         &self,
         _session_store: &ExtensionData,
         thread_store: &ExtensionData,
-    ) -> Vec<Arc<dyn ToolExecutor<ToolCall>>> {
+    ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
         let Some(state) = thread_store.get::<MonitorState>() else {
             return Vec::new();
         };

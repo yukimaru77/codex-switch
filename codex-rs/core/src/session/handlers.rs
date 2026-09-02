@@ -121,7 +121,8 @@ pub async fn monitor_event(
     let trigger_turn = event.should_trigger_turn();
     sess.input_queue.enqueue_monitor_event(event).await;
     if trigger_turn {
-        sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id).await;
+        sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
+            .await;
     }
 }
 

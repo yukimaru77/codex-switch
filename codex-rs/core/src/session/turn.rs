@@ -663,7 +663,8 @@ fn turn_user_input(input: &[TurnInput]) -> Vec<UserInput> {
             TurnInput::UserInput { content, .. } => Some(content.as_slice()),
             TurnInput::ResponseItem(_)
             | TurnInput::FunctionCallOutput(_)
-            | TurnInput::InterAgentCommunication(_) => None,
+            | TurnInput::InterAgentCommunication(_)
+            | TurnInput::MonitorEvent(_) => None,
         })
         .flatten()
         .cloned()

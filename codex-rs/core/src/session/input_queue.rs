@@ -6,8 +6,8 @@ use codex_diagnostics::GaugeGuard;
 use codex_history::ResponseItemEnvelope;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::turn_input::TurnStartOptions;
 use codex_protocol::protocol::MonitorEvent;
+use codex_protocol::turn_input::TurnStartOptions;
 use codex_protocol::user_input::UserInput;
 use serde::Deserialize;
 use serde::Serialize;
@@ -771,26 +771,21 @@ mod tests {
             false,
         );
         input_queue
-            .enqueue_mailbox_communication(
-                mail.clone(),
-                /*parent_turn_id*/ None,
-                /*root_turn_id*/ None,
-            )
+            .enqueue_mailbox_communication(mail.clone(), TurnStartOptions::default())
             .await;
         let event = make_monitor_event("test", "event", /*wake*/ false);
         input_queue.enqueue_monitor_event(event.clone()).await;
 
+        let (items, start_options) = input_queue.drain_mailbox_input_items().await;
         assert_eq!(
-            input_queue.drain_mailbox_input_items().await,
-            (
-                vec![
-                    TurnInput::InterAgentCommunication(mail),
-                    TurnInput::MonitorEvent(event),
-                ],
-                None,
-                None,
-            )
+            items,
+            vec![
+                TurnInput::InterAgentCommunication(mail),
+                TurnInput::MonitorEvent(event),
+            ]
         );
+        assert!(start_options.parent_turn_id.is_none());
+        assert!(start_options.root_turn_id.is_none());
 
         assert!(!input_queue.has_pending_mailbox_items().await);
     }
@@ -820,8 +815,7 @@ mod tests {
                     "queued mail",
                     /*trigger_turn*/ false,
                 ),
-                /*parent_turn_id*/ None,
-                /*root_turn_id*/ None,
+                TurnStartOptions::default(),
             )
             .await;
         assert!(!input_queue.has_pending_input(&active_turn).await);

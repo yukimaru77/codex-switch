@@ -12,6 +12,8 @@ use crate::tools::handlers::CodeModeExecuteHandler;
 use crate::tools::handlers::CodeModeWaitHandler;
 use crate::tools::handlers::CurrentTimeHandler;
 use crate::tools::handlers::DynamicToolHandler;
+use crate::tools::handlers::EnvListHandler;
+use crate::tools::handlers::EnvStatusHandler;
 use crate::tools::handlers::EnvSwitchHandler;
 use crate::tools::handlers::ExecCommandHandler;
 use crate::tools::handlers::ExecCommandHandlerOptions;
@@ -1249,6 +1251,14 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
 
     if features.enabled(Feature::EnvSwitch) && environment_mode.has_environment() {
         registry.add(EnvSwitchHandler);
+    }
+
+    if environment_mode.has_environment()
+        && (matches!(environment_mode, ToolEnvironmentMode::Multiple)
+            || features.enabled(Feature::EnvSwitch))
+    {
+        registry.add(EnvStatusHandler);
+        registry.add(EnvListHandler);
     }
 
     if environment_mode.has_environment() && features.enabled(Feature::ViewImage) {

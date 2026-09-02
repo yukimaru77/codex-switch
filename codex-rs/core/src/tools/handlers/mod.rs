@@ -2,8 +2,11 @@ pub(crate) mod apply_patch;
 pub(crate) mod apply_patch_spec;
 mod current_time;
 mod dynamic;
+mod env_status;
+pub(crate) mod env_status_spec;
 mod env_switch;
 pub(crate) mod env_switch_spec;
+mod environment_routing;
 pub(crate) mod extension_tools;
 mod get_context_remaining;
 pub(crate) mod get_context_remaining_spec;
@@ -20,6 +23,7 @@ mod new_context_window;
 pub(crate) mod new_context_window_spec;
 mod plan;
 pub(crate) mod plan_spec;
+mod remote_command_advisory;
 mod request_permissions;
 mod request_plugin_install;
 pub(crate) mod request_plugin_install_spec;
@@ -37,9 +41,7 @@ mod view_image;
 pub(crate) mod view_image_spec;
 mod wait_for_environment;
 
-use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_sandboxing::policy_transforms::materialize_additional_permissions;
-use codex_sandboxing::policy_transforms::intersect_permission_profiles;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use codex_sandboxing::policy_transforms::normalize_additional_permissions;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -52,8 +54,6 @@ use std::path::Path;
 use crate::function_tool::FunctionCallError;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
-use crate::session::turn_context::TurnContext;
-use crate::session::turn_context::TurnEnvironment;
 pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
 pub(crate) use crate::tools::code_mode::CodeModeWaitHandler;
 pub use apply_patch::ApplyPatchHandler;
@@ -61,7 +61,14 @@ use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 pub use current_time::CurrentTimeHandler;
 pub use dynamic::DynamicToolHandler;
+pub use env_status::EnvListHandler;
+pub use env_status::EnvStatusHandler;
 pub use env_switch::EnvSwitchHandler;
+pub(crate) use environment_routing::default_tool_environment_id;
+pub(crate) use environment_routing::dynamic_environment_visible_to_thread;
+pub(crate) use environment_routing::environment_selections_with_default;
+pub(crate) use environment_routing::environment_thread_keys;
+pub(crate) use environment_routing::resolve_tool_environment;
 pub use get_context_remaining::GetContextRemainingHandler;
 pub use list_available_plugins_to_install::ListAvailablePluginsToInstallHandler;
 pub use mcp::McpHandler;
@@ -70,6 +77,8 @@ pub use mcp_resource::ListMcpResourcesHandler;
 pub use mcp_resource::ReadMcpResourceHandler;
 pub use new_context_window::NewContextWindowHandler;
 pub use plan::PlanHandler;
+pub(crate) use remote_command_advisory::RemoteCommandAdvisoryOptions;
+pub(crate) use remote_command_advisory::remote_command_advisory;
 pub use request_permissions::RequestPermissionsHandler;
 pub use request_plugin_install::RequestPluginInstallHandler;
 pub use request_user_input::RequestUserInputHandler;
@@ -156,88 +165,6 @@ where
 {
     let _guard = AbsolutePathBufGuard::new(base_path);
     parse_arguments(arguments)
-}
-
-/// Resolve the environment to use for a tool call.
-///
-/// Resolution order:
-/// 1. `environment_id` is `None` → return the primary turn environment.
-/// 2. `environment_id` is `Some(LOCAL_ENVIRONMENT_ID)` → return the primary
-///    local environment (special-cased so callers can always route to the host
-///    even when `local` is not in the frozen turn list).
-/// 3. `environment_id` is `Some(id)` and `id` is in `turn.environments.turn_environments` →
-///    clone and return it.
-/// 4. `environment_id` is `Some(id)`, not in `turn` but present in the live
-///    `EnvironmentManager` → synthesize a `TurnEnvironment` using the cwd and
-///    shell recorded in `EnvironmentManager::get_environment_metadata`.
-///    If metadata was not recorded (should not happen in normal operation), the
-///    cwd falls back to `/` — *not* the host primary cwd — to avoid silently
-///    running remote commands in a host path that does not exist remotely.
-/// 5. Otherwise → "unknown turn environment id" error.
-///
-/// Returns an owned `TurnEnvironment` because synthesised values in case 4
-/// have no backing storage in `turn`.
-pub(crate) async fn resolve_tool_environment(
-    session: &Session,
-    turn: &TurnContext,
-    environment_id: Option<&str>,
-) -> Result<Option<TurnEnvironment>, FunctionCallError> {
-    let Some(env_id) = environment_id else {
-        return Ok(turn.environments.primary().cloned());
-    };
-
-    // Special case: "local" always resolves to the primary local environment
-    // regardless of whether it is present in the frozen turn list.
-    if env_id == LOCAL_ENVIRONMENT_ID {
-        return Ok(turn.environments.primary().cloned());
-    }
-
-    // Fast path: id already in the frozen turn list.
-    if let Some(found) = turn
-        .environments
-        .turn_environments()
-        .find(|environment| environment.selection.environment_id == env_id)
-    {
-        return Ok(Some(found.clone()));
-    }
-
-    // Live fallback: look up through EnvironmentManager (for dynamically
-    // registered environments, e.g. registered by env_switch in the same turn).
-    if let Some(environment) = session.services.environment_manager.get_environment(env_id) {
-        let (cwd, shell) = if let Some(meta) = session
-            .services
-            .environment_manager
-            .get_environment_metadata(env_id)
-        {
-            let cwd = AbsolutePathBuf::from_absolute_path_checked(&meta.cwd).unwrap_or_else(|_| {
-                AbsolutePathBuf::from_absolute_path(std::path::Path::new("/"))
-                    .expect("/ is always absolute")
-            });
-            let shell = meta.shell.map(|shell_path| {
-                crate::shell::get_shell_by_model_provided_path(&std::path::PathBuf::from(shell_path))
-            });
-            (cwd, shell)
-        } else {
-            let cwd = AbsolutePathBuf::from_absolute_path(std::path::Path::new("/"))
-                .expect("/ is always absolute");
-            (cwd, None)
-        };
-        let Some(primary) = turn.environments.primary() else {
-            return Err(FunctionCallError::RespondToModel(
-                "cannot derive configuration for a dynamically registered environment".to_string(),
-            ));
-        };
-        let mut resolved = primary.clone();
-        resolved.selection.environment_id = env_id.to_string();
-        resolved.selection.cwd = codex_utils_path_uri::PathUri::from_abs_path(&cwd);
-        resolved.environment = environment;
-        resolved.shell = shell;
-        return Ok(Some(resolved));
-    }
-
-    Err(FunctionCallError::RespondToModel(format!(
-        "unknown turn environment id `{env_id}`"
-    )))
 }
 
 /// Validates feature/policy constraints for `with_additional_permissions` and

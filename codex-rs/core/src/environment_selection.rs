@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
-#[cfg(test)]
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -16,6 +15,10 @@ use codex_exec_server::ExecutorFileSystem;
 use codex_exec_server::SelectedCapabilityRootsStatus;
 use codex_protocol::capabilities::CapabilityRootLocation;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
+#[cfg(test)]
+use codex_protocol::error::CodexErr;
+#[cfg(test)]
+use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::EnvironmentConfig;
 use codex_protocol::protocol::EnvironmentConfigState;
@@ -227,7 +230,29 @@ impl StartingTurnEnvironment {
     }
 
     pub(crate) fn resolved(&self) -> Option<Result<TurnEnvironment, Arc<ExecServerError>>> {
-        self.resolution.clone().now_or_never()
+        self.resolution.clone().now_or_never().map(|resolved| {
+            resolved.map(|environment| {
+                let mut selection = self.selection.clone();
+                if matches!(selection.config, EnvironmentConfigState::Pending)
+                    && let Some(installed_config) = environment.installed_config
+                {
+                    selection.config = EnvironmentConfigState::Ready(installed_config);
+                }
+                let mut turn_environment = TurnEnvironment::new(
+                    selection,
+                    self.config_origin,
+                    environment.environment,
+                    environment.shell,
+                );
+                turn_environment.user_home_dir = environment.user_home_dir;
+                turn_environment.executor_platform_os = environment.executor_platform_os;
+                turn_environment.temporary_directories = environment.temporary_directories;
+                turn_environment.shell_snapshot = environment.shell_snapshot;
+                turn_environment.shell_snapshot_v2_supported =
+                    environment.shell_snapshot_v2_supported;
+                turn_environment
+            })
+        })
     }
 }
 
@@ -918,6 +943,25 @@ impl TurnEnvironmentSnapshot {
 }
 
 #[cfg(test)]
+fn test_resolved_environment_config() -> EnvironmentConfig {
+    EnvironmentConfig {
+        allow_login_shell: true,
+        workspace_roots: Vec::new(),
+        permission_profile: crate::config::PermissionProfileSnapshot::legacy(
+            codex_protocol::models::PermissionProfile::read_only(),
+        ),
+        shell_environment_policy: Default::default(),
+        windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel::Disabled,
+        windows_sandbox_private_desktop: true,
+        use_legacy_landlock: false,
+        exec_policy: None,
+        mcp_policy: None,
+        network_policy: None,
+        selected_capability_roots: Vec::new(),
+    }
+}
+
+#[cfg(test)]
 fn resolve_environment_selections(
     environment_manager: &EnvironmentManager,
     environments: &[TurnEnvironmentSelection],
@@ -945,14 +989,21 @@ fn resolve_environment_selections(
         let shell = metadata
             .and_then(|metadata| metadata.shell)
             .map(|shell| crate::shell::shell_for_remote_path(std::path::Path::new(&shell)));
-        turn_environments.push(TurnEnvironment::new(
-            environment_id,
+        let mut selection = selected_environment.clone();
+        selection.cwd = cwd;
+        if matches!(selection.config, EnvironmentConfigState::FromThread) {
+            selection.config = EnvironmentConfigState::Ready(test_resolved_environment_config());
+        }
+        turn_environments.push(TurnEnvironmentState::Ready(TurnEnvironment::new(
+            selection,
+            EnvironmentConfigOrigin::Thread,
             environment,
-            cwd,
             shell,
-        ));
+        )));
     }
-    Ok(TurnEnvironmentSnapshot { turn_environments })
+    Ok(TurnEnvironmentSnapshot {
+        environments: turn_environments,
+    })
 }
 
 #[cfg(test)]
@@ -1322,9 +1373,10 @@ url = "ws://127.0.0.1:8765"
             &[TurnEnvironmentSelection {
                 environment_id: REMOTE_ENVIRONMENT_ID.to_string(),
                 cwd: cwd_uri,
+                workspace_roots: Vec::new(),
+                config: EnvironmentConfigState::FromThread,
             }],
         )
-        .await
         .expect("remote environment should resolve");
 
         assert_eq!(
