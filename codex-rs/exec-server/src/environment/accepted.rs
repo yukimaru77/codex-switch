@@ -37,6 +37,11 @@ impl EnvironmentManager {
             local_environment: None,
             local_runtime_paths: None,
             http_client_factory,
+            env_metadata: Default::default(),
+            thread_env_metadata: Default::default(),
+            last_launcher: Default::default(),
+            last_environment_id: Default::default(),
+            thread_environment_ids: Default::default(),
         })
     }
 
