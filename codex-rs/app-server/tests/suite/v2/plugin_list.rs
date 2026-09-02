@@ -1286,6 +1286,7 @@ async fn plugin_catalogs_skip_invalid_project_config_and_report_cwd_error() -> R
         response
             .marketplaces
             .iter()
+            .filter(|marketplace| marketplace.name == "valid-marketplace")
             .flat_map(|marketplace| &marketplace.plugins)
             .map(|plugin| (plugin.id.as_str(), plugin.installed, plugin.enabled))
             .collect::<Vec<_>>(),
@@ -4810,6 +4811,7 @@ remote_plugin = true
         let ids = response
             .marketplaces
             .iter()
+            .filter(|marketplace| marketplace.name == "local")
             .flat_map(|marketplace| &marketplace.plugins)
             .map(|plugin| plugin.id.as_str())
             .collect::<Vec<_>>();

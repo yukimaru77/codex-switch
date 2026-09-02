@@ -105,7 +105,14 @@ impl McpServerConnection {
         if client.client.is_closed().await {
             return None;
         }
-        if current.uses_oauth_store() && matches!(desired.oauth_credentials(), Ok(None)) {
+        if current.uses_oauth_store()
+            && matches!(desired.oauth_credentials(), Ok(None))
+            && client
+                .client
+                .managed_oauth_credentials()
+                .await
+                .is_some_and(|credentials| credentials.is_some())
+        {
             return None;
         }
         if current == desired {

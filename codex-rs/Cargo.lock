@@ -3857,6 +3857,7 @@ version = "0.152.1"
 dependencies = [
  "codex-core",
  "codex-extension-api",
+ "codex-features",
  "codex-protocol",
  "codex-tools",
  "serde",

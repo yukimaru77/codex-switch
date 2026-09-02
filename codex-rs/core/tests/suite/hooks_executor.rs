@@ -362,7 +362,13 @@ async fn executor_stop_hook_rejects_mismatched_environment() -> Result<()> {
     Ok(())
 }
 
-#[test_case("Stop", "", "", 1; "enabled")]
+#[test_case(
+    "Stop",
+    "[apps.connector_openai_browser]\nenabled = true\n",
+    "",
+    1;
+    "enabled"
+)]
 #[test_case("SubagentStop", "", "", 1; "subagent_enabled")]
 #[test_case(
     "Stop",
@@ -475,6 +481,11 @@ async fn executor_browser_and_computer_use_stop_hooks_use_separate_mcp_routes(
         fixture.test.session_configured = child.session_configured;
     }
     fixture.attach().await?;
+    fixture
+        .test
+        .codex
+        .refresh_mcp_config(fixture.test.config.clone())
+        .await;
     if hook_event == "SubagentStop" {
         // Cached subagent MCP servers start on first use; cleanup must not start them.
         fixture

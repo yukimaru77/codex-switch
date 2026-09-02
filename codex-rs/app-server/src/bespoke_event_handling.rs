@@ -1090,12 +1090,12 @@ pub(crate) async fn apply_bespoke_event_handling(
                 });
             }
         }
-        EventMsg::ItemCompleted(event) => {
+        EventMsg::ItemCompleted(mut event) => {
             apply_canonical_item_completed_side_effects(
                 &thread_manager,
                 &thread_watch_manager,
                 &thread_state,
-                &event.item,
+                &mut event.item,
             )
             .await;
             let mut notification = item_event_to_server_notification(
@@ -1400,16 +1400,24 @@ async fn apply_canonical_item_completed_side_effects(
     thread_manager: &Arc<ThreadManager>,
     thread_watch_manager: &ThreadWatchManager,
     thread_state: &Arc<Mutex<ThreadState>>,
-    item: &CoreTurnItem,
+    item: &mut CoreTurnItem,
 ) {
     match item {
         CoreTurnItem::CommandExecution(item) => {
-            thread_state
-                .lock()
-                .await
+            let mut state = thread_state.lock().await;
+            state
                 .turn_summary
                 .command_execution_started
                 .remove(&item.id);
+            // A rejected zsh-fork subcommand exits the parent process unsuccessfully. Preserve
+            // the approval outcome instead of exposing that implementation detail as `Failed`.
+            if state
+                .turn_summary
+                .command_execution_declined
+                .remove(&item.id)
+            {
+                item.status = codex_protocol::items::CommandExecutionStatus::Declined;
+            }
         }
         CoreTurnItem::SubAgentActivity(activity)
             if activity.kind == SubAgentActivityKind::Interrupted =>
@@ -2095,6 +2103,10 @@ async fn on_command_execution_request_approval_response(
                         ReviewDecision::denied("rejected by user"),
                         Some(CommandExecutionStatus::Declined),
                     ),
+                    CommandExecutionApprovalDecision::Cancel if approval_id.is_some() => (
+                        ReviewDecision::denied("rejected by user"),
+                        Some(CommandExecutionStatus::Declined),
+                    ),
                     CommandExecutionApprovalDecision::Cancel => (
                         ReviewDecision::Abort,
                         Some(CommandExecutionStatus::Declined),
@@ -2131,11 +2143,20 @@ async fn on_command_execution_request_approval_response(
         // For zsh-fork subcommand approvals, approval_id is present and
         // item_id points to the parent command item.
         if approval_id.is_some() {
-            let state = thread_state.lock().await;
-            state
+            let mut state = thread_state.lock().await;
+            let suppress_completion = state
                 .turn_summary
                 .command_execution_started
-                .contains(&item_id)
+                .contains(&item_id);
+            if suppress_completion
+                && matches!(&completion_status, Some(CommandExecutionStatus::Declined))
+            {
+                state
+                    .turn_summary
+                    .command_execution_declined
+                    .insert(item_id.clone());
+            }
+            suppress_completion
         } else {
             false
         }

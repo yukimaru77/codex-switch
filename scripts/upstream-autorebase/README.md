@@ -13,7 +13,8 @@ launchd (6時間ごと)
        3. 専用 worktree を作成(メインの checkout には一切触らない)
           ../codex-autorebase-worktrees/env-switch-monitor-v<NEW>
        4. git rebase --onto rust-v<NEW> rust-v<OLD> で追加機能コミットを載せ替え
-       5. cargo build --bin codex + app-server 統合テスト用 code-mode host +
+       5. OpenAI 公開の Codex 用 rusty_v8 artifact を checksum 検証付きで取得し、
+          cargo build --bin codex + app-server 統合テスト用 code-mode host +
           MCP stdio helper の事前ビルド + cargo nextest run
           (追加機能が触っているクレートを diff から自動算出してスコープ)
        6. 失敗した場合:
@@ -35,6 +36,7 @@ launchd (6時間ごと)
 - `state.jsonl` — 各バージョンの処理履歴(started / rebased / repaired / pushed / failed …)
 - `logs/run-*.log` — 実行ログ、`logs/verify-*.log` — build/test 失敗ログ、`logs/agent-*.log` — エージェントの出力
 - `target-cache/` — worktree 間で共有する cargo target(毎回のフルビルド回避)。検証前の空き容量が既定 20 GiB 未満なら自動的に clean される
+- `rusty-v8/` — crate version / host target ごとに checksum 検証済みの Codex 用 V8 archive と binding をキャッシュ
 
 ## セットアップ
 

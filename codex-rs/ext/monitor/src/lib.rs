@@ -574,12 +574,22 @@ impl ToolContributor for MonitorExtension {
     }
 }
 
-impl<C: Send + Sync + 'static> codex_extension_api::ThreadLifecycleContributor<C>
+impl codex_extension_api::ThreadLifecycleContributor<codex_core::config::Config>
     for MonitorExtension
 {
-    fn on_thread_start<'a>(&'a self, input: ThreadStartInput<'a, C>) -> ExtensionFuture<'a, ()> {
+    fn on_thread_start<'a>(
+        &'a self,
+        input: ThreadStartInput<'a, codex_core::config::Config>,
+    ) -> ExtensionFuture<'a, ()> {
         let tm = self.thread_manager.clone();
         Box::pin(async move {
+            if !input
+                .config
+                .features
+                .enabled(codex_features::Feature::ShellTool)
+            {
+                return;
+            }
             let Ok(thread_id) = ThreadId::from_string(input.thread_store.level_id()) else {
                 return;
             };
@@ -612,12 +622,10 @@ impl<C: Send + Sync + 'static> codex_extension_api::ThreadLifecycleContributor<C
     }
 }
 
-pub fn install<C>(
-    registry: &mut ExtensionRegistryBuilder<C>,
+pub fn install(
+    registry: &mut ExtensionRegistryBuilder<codex_core::config::Config>,
     thread_manager: Weak<codex_core::ThreadManager>,
-) where
-    C: Send + Sync + 'static,
-{
+) {
     let extension = Arc::new(MonitorExtension { thread_manager });
     registry.thread_lifecycle_contributor(extension.clone());
     registry.tool_contributor(extension);

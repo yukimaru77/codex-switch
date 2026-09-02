@@ -255,6 +255,43 @@ ensure_build_space() {
     fi
 }
 
+setup_rusty_v8() {
+    # Cargo's default rusty_v8 mirror does not carry every feature-specific
+    # archive used by Codex. Match CI by selecting the Codex-built archive and
+    # generated bindings for the resolved crate version and host target.
+    _v8_version="$(sed -n 's/^v8 = "=\([^"]*\)"/\1/p' "$WT/codex-rs/Cargo.toml")"
+    [ -n "$_v8_version" ] || return 1
+    _v8_target="$(rustc -vV | awk '/^host:/ { print $2 }')"
+    [ -n "$_v8_target" ] || return 1
+
+    _v8_profile=ptrcomp_sandbox_release
+    _v8_dir="$STATE_DIR/rusty-v8/$_v8_version/$_v8_target"
+    _v8_base_url="https://github.com/openai/codex/releases/download/rusty-v8-v$_v8_version"
+    case "$_v8_target" in
+        *-pc-windows-msvc) _v8_archive="rusty_v8_${_v8_profile}_${_v8_target}.lib.gz" ;;
+        *) _v8_archive="librusty_v8_${_v8_profile}_${_v8_target}.a.gz" ;;
+    esac
+    _v8_binding="src_binding_${_v8_profile}_${_v8_target}.rs"
+    _v8_checksums="rusty_v8_${_v8_profile}_${_v8_target}.sha256"
+
+    mkdir -p "$_v8_dir"
+    for _v8_asset in "$_v8_archive" "$_v8_binding" "$_v8_checksums"; do
+        if [ ! -s "$_v8_dir/$_v8_asset" ]; then
+            curl -fsSL "$_v8_base_url/$_v8_asset" -o "$_v8_dir/$_v8_asset.tmp" \
+                || return 1
+            mv "$_v8_dir/$_v8_asset.tmp" "$_v8_dir/$_v8_asset"
+        fi
+    done
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        (cd "$_v8_dir" && tr -d '\r' < "$_v8_checksums" | sha256sum -c -) || return 1
+    else
+        (cd "$_v8_dir" && tr -d '\r' < "$_v8_checksums" | shasum -a 256 -c -) || return 1
+    fi
+    export RUSTY_V8_ARCHIVE="$_v8_dir/$_v8_archive"
+    export RUSTY_V8_SRC_BINDING_PATH="$_v8_dir/$_v8_binding"
+}
+
 verify() {
     # verify <logfile>; returns 0 when build + tests pass
     _vlog="$1"
@@ -263,6 +300,13 @@ verify() {
         log "Cargo target cleanup FAILED (see $_vlog)"
         return 1
     fi
+    log "Verify: configure Codex rusty_v8 artifacts"
+    if ! setup_rusty_v8 >> "$_vlog" 2>&1; then
+        log "rusty_v8 artifact setup FAILED (see $_vlog)"
+        return 1
+    fi
+    # Snapshot tests must not inherit a non-interactive caller's color override.
+    unset NO_COLOR
     log "Verify: cargo build --bin codex"
     if ! (cd "$WT/codex-rs" && cargo build --bin codex) >> "$_vlog" 2>&1; then
         log "Build FAILED (see $_vlog)"
