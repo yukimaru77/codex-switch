@@ -210,6 +210,9 @@ pub(super) fn server_notification_thread_target(
         | ServerNotification::WindowsWorldWritableWarning(_)
         | ServerNotification::WindowsSandboxSetupCompleted(_)
         | ServerNotification::AccountLoginCompleted(_) => None,
+        ServerNotification::MonitorNotification(notification) => {
+            Some(notification.thread_id.as_str())
+        }
     };
 
     match thread_id {

@@ -929,6 +929,16 @@ impl ThreadRequestProcessor {
             .map(|response| Some(response.into()))
     }
 
+    pub(crate) async fn thread_monitor_event(
+        &self,
+        request_id: &ConnectionRequestId,
+        params: ThreadMonitorEventParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        self.thread_monitor_event_inner(request_id, params)
+            .await
+            .map(|response| Some(response.into()))
+    }
+
     pub(crate) async fn thread_approve_guardian_denied_action(
         &self,
         request_id: &ConnectionRequestId,
@@ -2471,6 +2481,21 @@ impl ThreadRequestProcessor {
         .await
         .map_err(|err| internal_error(format!("failed to start shell command: {err}")))?;
         Ok(ThreadShellCommandResponse {})
+    }
+
+    async fn thread_monitor_event_inner(
+        &self,
+        request_id: &ConnectionRequestId,
+        params: ThreadMonitorEventParams,
+    ) -> Result<ThreadMonitorEventResponse, JSONRPCErrorError> {
+        let ThreadMonitorEventParams { thread_id, event } = params;
+        let event: codex_protocol::protocol::MonitorEvent = serde_json::from_value(event)
+            .map_err(|err| invalid_request(format!("invalid MonitorEvent: {err}")))?;
+        let (_, thread) = self.load_thread(&thread_id).await?;
+        self.submit_core_op(request_id, thread.as_ref(), Op::MonitorEvent { event })
+            .await
+            .map_err(|err| internal_error(format!("failed to submit monitor event: {err}")))?;
+        Ok(ThreadMonitorEventResponse {})
     }
 
     async fn thread_approve_guardian_denied_action_inner(

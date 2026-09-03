@@ -213,6 +213,7 @@ Example with notification opt-out:
 - `thread/unarchive` — move an archived rollout file back into the sessions directory; returns the restored `thread` on success and emits `thread/unarchived`.
 - `thread/compact/start` — trigger conversation history compaction for a thread; returns `{}` immediately while progress streams through standard turn/item notifications. Parent-owned Multi-Agent V2 subagents reject direct compaction requests.
 - `thread/shellCommand` — run a user-initiated `!` shell command against a thread; this runs unsandboxed with full access rather than inheriting the thread sandbox policy. Parent-owned Multi-Agent V2 subagents reject direct shell commands. Returns `{}` immediately while progress streams through standard turn/item notifications and any active turn receives the formatted output in its message stream.
+- `thread/monitorEvent` — submit a serialized `MonitorEvent` to a loaded thread. The event joins an active turn when possible; `attach-or-wake` events may start an idle turn, while `attach-only` events remain queued until a turn is active. Returns `{}` when accepted.
 - `thread/approveGuardianDeniedAction` — manually approve a previously denied Guardian action; parent-owned Multi-Agent V2 subagents reject direct approvals. Replies to pending server-issued approval requests are unaffected.
 - `thread/backgroundTerminals/clean` — terminate all running background terminals for a thread (experimental; requires `capabilities.experimentalApi`); returns `{}` when the cleanup request is accepted.
 - `thread/backgroundTerminals/list` — list running background terminals for a loaded thread (experimental; requires `capabilities.experimentalApi`); returns `data` with the running terminal ids.
@@ -1714,6 +1715,8 @@ Each realtime item has an `id`, a `realtimeSessionId`, and one of four types: `r
 Recoverable configuration and initialization warnings use the existing `configWarning` notification: `{ summary, details?, path?, range? }`. App-server may emit it during initialization for config parsing and related setup diagnostics, or to the requesting connection during `thread/start` when that thread's exec-policy rules fail to parse.
 
 Generic runtime warnings use the `warning` notification: `{ threadId?, message }`. App-server emits this for non-fatal warnings from the core event stream, including cases where not all enabled skills are included in the model-visible skills list for a session.
+
+Background monitor events also emit `monitor/notification` with `{ threadId, monitorName, summary, kind }`, allowing clients to display output and lifecycle updates independently of model-turn rendering.
 
 ### Notification opt-out
 

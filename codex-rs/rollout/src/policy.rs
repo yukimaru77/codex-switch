@@ -133,6 +133,7 @@ pub fn should_persist_event_msg(ev: &EventMsg, history_mode: ThreadHistoryMode) 
             matches!(history_mode, ThreadHistoryMode::Legacy)
                 && event.kind != SubAgentActivityKind::Completed
         }
+        EventMsg::MonitorNotification(_) => matches!(history_mode, ThreadHistoryMode::Legacy),
 
         // Transient, non-durable events.
         EventMsg::Error(_)
