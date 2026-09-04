@@ -210,6 +210,9 @@ pub(super) fn server_notification_thread_target(
         | ServerNotification::WindowsWorldWritableWarning(_)
         | ServerNotification::WindowsSandboxSetupCompleted(_)
         | ServerNotification::AccountLoginCompleted(_) => None,
+        ServerNotification::MonitorNotification(notification) => {
+            Some(notification.thread_id.as_str())
+        }
     };
 
     match thread_id {
@@ -230,6 +233,7 @@ mod tests {
     use codex_app_server_protocol::GuardianWarningNotification;
     use codex_app_server_protocol::McpServerStartupState;
     use codex_app_server_protocol::McpServerStatusUpdatedNotification;
+    use codex_app_server_protocol::MonitorNotificationNotification;
     use codex_app_server_protocol::ServerNotification;
     use codex_app_server_protocol::ThreadSettings;
     use codex_app_server_protocol::ThreadSettingsUpdatedNotification;
@@ -300,6 +304,22 @@ mod tests {
             thread_id: thread_id.to_string(),
             message: "warning".to_string(),
         });
+
+        let target = server_notification_thread_target(&notification);
+
+        assert_eq!(target, ServerNotificationThreadTarget::Thread(thread_id));
+    }
+
+    #[test]
+    fn monitor_notifications_route_to_threads() {
+        let thread_id = ThreadId::new();
+        let notification =
+            ServerNotification::MonitorNotification(MonitorNotificationNotification {
+                thread_id: thread_id.to_string(),
+                monitor_name: "tests".to_string(),
+                summary: "changed".to_string(),
+                kind: "output".to_string(),
+            });
 
         let target = server_notification_thread_target(&notification);
 

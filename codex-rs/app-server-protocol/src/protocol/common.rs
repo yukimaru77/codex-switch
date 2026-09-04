@@ -1949,6 +1949,7 @@ server_notification_definitions! {
     /// Notifies the user of world-writable directories on Windows, which cannot be protected by the sandbox.
     WindowsWorldWritableWarning => "windows/worldWritableWarning" (v2::WindowsWorldWritableWarningNotification),
     WindowsSandboxSetupCompleted => "windowsSandbox/setupCompleted" (v2::WindowsSandboxSetupCompletedNotification),
+    MonitorNotification => "monitor/notification" (v2::MonitorNotificationNotification),
 
     #[serde(rename = "account/login/completed")]
     #[ts(rename = "account/login/completed")]

@@ -371,6 +371,7 @@ use self::session_header::SessionHeader;
 mod hook_lifecycle;
 mod hooks;
 mod interaction;
+mod monitor_commands;
 mod skills;
 mod slash_dispatch;
 use self::skills::collect_tool_mentions;

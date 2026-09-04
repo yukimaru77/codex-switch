@@ -16,6 +16,7 @@ use crate::mcp::McpManager;
 use crate::mcp_tool_exposure::McpHandlerCache;
 use crate::tools::ExecutedToolCallRecorder;
 use crate::tools::code_mode::CodeModeService;
+use crate::tools::handlers::MonitorManager;
 use crate::tools::handlers::ToolSearchHandlerCache;
 use crate::tools::network_approval::NetworkApprovalService;
 use crate::tools::sandboxing::ApprovalStore;
@@ -49,6 +50,7 @@ pub(crate) struct SessionServices {
     /// Immutable MCP handlers scoped to this thread's current binding.
     pub(crate) mcp_handler_cache: McpHandlerCache,
     pub(crate) unified_exec_manager: UnifiedExecProcessManager,
+    pub(crate) monitor_manager: MonitorManager,
     pub(crate) elicitations: ElicitationService,
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) shell_zsh_path: Option<PathBuf>,

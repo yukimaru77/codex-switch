@@ -8,8 +8,8 @@ use crate::function_tool::FunctionCallError;
 use crate::maybe_emit_implicit_skill_invocation;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
-use crate::tools::context::boxed_tool_output;
 use crate::tools::handlers::apply_granted_turn_permissions;
 use crate::tools::handlers::apply_patch::intercept_apply_patch;
 use crate::tools::handlers::implicit_granted_permissions;
@@ -131,15 +131,19 @@ impl ToolExecutor<ToolInvocation> for ExecCommandHandler {
     where
         ToolInvocation: 'a,
     {
-        Box::pin(self.handle_call(invocation))
+        Box::pin(async move {
+            self.execute(invocation)
+                .await
+                .map(|output| Box::new(output) as Box<dyn ToolOutput>)
+        })
     }
 }
 
 impl ExecCommandHandler {
-    async fn handle_call(
+    pub(crate) async fn execute(
         &self,
         invocation: ToolInvocation,
-    ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
+    ) -> Result<ExecCommandToolOutput, FunctionCallError> {
         let ToolInvocation {
             session,
             turn,
@@ -375,7 +379,7 @@ impl ExecCommandHandler {
         }
         if let Some(output) = intercepted_patch? {
             manager.release_process_id(process_id).await;
-            return Ok(boxed_tool_output(ExecCommandToolOutput {
+            return Ok(ExecCommandToolOutput {
                 event_call_id: String::new(),
                 chunk_id: String::new(),
                 wall_time: std::time::Duration::ZERO,
@@ -387,7 +391,7 @@ impl ExecCommandHandler {
                 original_token_count: None,
                 output_omitted_bytes: None,
                 hook_command: None,
-            }));
+            });
         }
 
         emit_unified_exec_tty_metric(&turn.session_telemetry, tty);
@@ -419,7 +423,7 @@ impl ExecCommandHandler {
             None => manager.exec_command(request, &context).await,
         };
         match result {
-            Ok(response) => Ok(boxed_tool_output(response)),
+            Ok(response) => Ok(response),
             Err(UnifiedExecError::SandboxDenied {
                 output,
                 original_token_count,
@@ -429,7 +433,7 @@ impl ExecCommandHandler {
                 let output_text = output.aggregated_output.text;
                 let original_token_count =
                     original_token_count.unwrap_or_else(|| approx_token_count(&output_text));
-                Ok(boxed_tool_output(ExecCommandToolOutput {
+                Ok(ExecCommandToolOutput {
                     event_call_id: context.call_id.clone(),
                     chunk_id: generate_chunk_id(),
                     wall_time: output.duration,
@@ -443,7 +447,7 @@ impl ExecCommandHandler {
                     original_token_count: Some(original_token_count),
                     output_omitted_bytes,
                     hook_command: Some(hook_command),
-                }))
+                })
             }
             Err(err) => Err(FunctionCallError::RespondToModel(format!(
                 "exec_command failed for `{command_for_display}`: {err:?}"

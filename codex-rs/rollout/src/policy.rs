@@ -133,9 +133,9 @@ pub fn should_persist_event_msg(ev: &EventMsg, history_mode: ThreadHistoryMode) 
             matches!(history_mode, ThreadHistoryMode::Legacy)
                 && event.kind != SubAgentActivityKind::Completed
         }
-
         // Transient, non-durable events.
-        EventMsg::Error(_)
+        EventMsg::MonitorNotification(_)
+        | EventMsg::Error(_)
         | EventMsg::ThreadQueueChanged(_)
         | EventMsg::GuardianAssessment(_)
         | EventMsg::ExecCommandEnd(_)
@@ -200,3 +200,7 @@ pub fn should_persist_event_msg(ev: &EventMsg, history_mode: ThreadHistoryMode) 
         | EventMsg::CollabResumeBegin(_) => false,
     }
 }
+
+#[cfg(test)]
+#[path = "policy_tests.rs"]
+mod tests;

@@ -1715,6 +1715,8 @@ Recoverable configuration and initialization warnings use the existing `configWa
 
 Generic runtime warnings use the `warning` notification: `{ threadId?, message }`. App-server emits this for non-fatal warnings from the core event stream, including cases where not all enabled skills are included in the model-visible skills list for a session.
 
+Background monitor events also emit `monitor/notification` with `{ threadId, monitorName, summary, kind }`, allowing clients to display output and lifecycle updates independently of model-turn rendering.
+
 ### Notification opt-out
 
 Clients can suppress specific notifications per connection by sending exact method names in `initialize.params.capabilities.optOutNotificationMethods`.

@@ -885,6 +885,7 @@ impl Session {
     }
 
     pub(crate) async fn close_unified_exec_processes(&self) {
+        self.services.monitor_manager.cancel_all().await;
         self.services
             .unified_exec_manager
             .terminate_all_processes()
@@ -896,6 +897,10 @@ impl Session {
     }
 
     pub(crate) async fn terminate_background_terminal(&self, process_id: i32) -> bool {
+        self.services
+            .monitor_manager
+            .cancel_process(process_id)
+            .await;
         self.services
             .unified_exec_manager
             .terminate_process(process_id)

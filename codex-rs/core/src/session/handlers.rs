@@ -95,6 +95,36 @@ pub async fn inter_agent_communication(
     }
 }
 
+pub async fn monitor_event(
+    sess: &Arc<Session>,
+    sub_id: String,
+    event: codex_protocol::protocol::MonitorEvent,
+) {
+    let event = event.into_bounded();
+    // Emit TUI notification immediately so the UI shows monitor output
+    // in real time, even while foreground tools are executing.
+    let kind_label = event.kind_label();
+    let notification = codex_protocol::protocol::EventMsg::MonitorNotification(
+        codex_protocol::protocol::MonitorNotificationEvent {
+            monitor_name: event.monitor_name.clone(),
+            summary: event.summary.clone(),
+            kind: kind_label.to_string(),
+        },
+    );
+    sess.send_event_raw(codex_protocol::protocol::Event {
+        id: event.id.clone(),
+        msg: notification,
+    })
+    .await;
+
+    let trigger_turn = event.should_trigger_turn();
+    sess.input_queue.enqueue_monitor_event(event).await;
+    if trigger_turn {
+        sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
+            .await;
+    }
+}
+
 pub async fn run_user_shell_command(
     sess: &Arc<Session>,
     sub_id: String,
@@ -408,6 +438,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
     sess.hooks().shutdown().await;
     sess.async_hook_results.close();
     while sess.async_hook_results.try_recv().is_ok() {}
+    sess.services.monitor_manager.shutdown().await;
     sess.services
         .unified_exec_manager
         .terminate_all_processes()

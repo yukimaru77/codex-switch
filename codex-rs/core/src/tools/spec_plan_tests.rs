@@ -911,6 +911,42 @@ async fn shell_family_registers_only_unified_exec_tools() {
 }
 
 #[tokio::test]
+async fn monitor_tools_require_both_monitor_and_unified_exec_features() {
+    let enabled = probe(|turn| {
+        set_features(
+            turn,
+            &[Feature::ShellTool, Feature::UnifiedExec, Feature::Monitor],
+        );
+    })
+    .await;
+    enabled.assert_visible_contains(&["monitor_start", "monitor_stop", "monitor_list"]);
+
+    let monitor_disabled = probe(|turn| {
+        set_features(turn, &[Feature::ShellTool, Feature::UnifiedExec]);
+        set_feature(turn, Feature::Monitor, /*enabled*/ false);
+    })
+    .await;
+    monitor_disabled.assert_visible_lacks(&["monitor_start", "monitor_stop", "monitor_list"]);
+
+    let unified_exec_disabled = probe(|turn| {
+        set_features(turn, &[Feature::ShellTool, Feature::Monitor]);
+        let config = Arc::make_mut(&mut turn.config);
+        config.features = crate::config::ManagedFeatures::from_configured(
+            config.features.get().clone(),
+            Some(codex_config::Sourced::new(
+                codex_config::FeatureRequirementsToml {
+                    entries: BTreeMap::from([(Feature::UnifiedExec.key().to_string(), false)]),
+                },
+                codex_config::RequirementSource::Unknown,
+            )),
+        )
+        .expect("managed unified-exec restriction should be valid");
+    })
+    .await;
+    unified_exec_disabled.assert_visible_lacks(&["monitor_start", "monitor_stop", "monitor_list"]);
+}
+
+#[tokio::test]
 async fn exec_command_guidance_follows_executor_platform_and_fallbacks() {
     let opposite_host_os = if cfg!(windows) { "linux" } else { "windows" };
     for (platform_os, multiple_environments, expect_windows_guidance) in [

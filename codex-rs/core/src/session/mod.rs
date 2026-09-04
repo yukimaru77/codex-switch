@@ -219,6 +219,7 @@ pub(crate) mod context_window;
 mod environment;
 pub(crate) mod extension_metrics;
 mod handlers;
+pub(crate) use handlers::monitor_event;
 mod inject;
 mod input_queue;
 mod mcp;

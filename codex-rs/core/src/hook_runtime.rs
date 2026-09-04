@@ -59,6 +59,7 @@ use tracing::instrument;
 
 use crate::context::ContextualUserFragment;
 use crate::context::HookAdditionalContext;
+use crate::context::MonitorEventFragment;
 use crate::event_mapping::parse_turn_item;
 use crate::session::TurnInput;
 use crate::session::session::Session;
@@ -693,6 +694,10 @@ pub(crate) async fn inspect_pending_input(
             should_stop: false,
             additional_contexts: Vec::new(),
         },
+        TurnInput::MonitorEvent(_) => HookRuntimeOutcome {
+            should_stop: false,
+            additional_contexts: Vec::new(),
+        },
     }
 }
 
@@ -741,6 +746,11 @@ pub(crate) async fn record_pending_input(
         }
         TurnInput::InterAgentCommunication(communication) => {
             sess.record_inter_agent_communication(turn_context, communication)
+                .await;
+        }
+        TurnInput::MonitorEvent(event) => {
+            let item = ContextualUserFragment::into(MonitorEventFragment::new(event));
+            sess.record_conversation_items(turn_context, std::slice::from_ref(&item))
                 .await;
         }
     }

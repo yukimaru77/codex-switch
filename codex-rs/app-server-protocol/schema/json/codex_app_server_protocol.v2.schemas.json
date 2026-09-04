@@ -11265,6 +11265,31 @@
       },
       "type": "object"
     },
+    "MonitorNotificationNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "monitorName": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "monitorName",
+        "summary",
+        "threadId"
+      ],
+      "title": "MonitorNotificationNotification",
+      "type": "object"
+    },
     "MultiAgentMode": {
       "description": "Controls the effective multi-agent delegation instructions for a turn. `custom` means the configured mode hint defines the policy instead of a built-in policy.",
       "oneOf": [
@@ -16924,6 +16949,26 @@
             "params"
           ],
           "title": "WindowsSandbox/setupCompletedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
+                "monitor/notification"
+              ],
+              "title": "Monitor/notificationNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/MonitorNotificationNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Monitor/notificationNotification",
           "type": "object"
         },
         {

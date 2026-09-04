@@ -66,6 +66,7 @@ use crate::turn_input::TurnStartOptions;
 use codex_extension_items::image_generation::ImageGenerationFailure;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;
+use codex_utils_string::take_bytes_at_char_boundary;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -908,6 +909,109 @@ impl InterAgentCommunication {
     }
 }
 
+/// Describes when a monitor event should wake an idle session.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum MonitorWakePolicy {
+    /// Attach to the active turn if one is running; otherwise start a new turn.
+    AttachOrWake,
+    /// Attach only if a turn is active; stay queued otherwise.
+    AttachOnly,
+}
+
+/// The kind of event a monitor produced.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum MonitorEventKind {
+    /// One or more stdout lines batched together.
+    OutputBatch,
+    /// The monitored process exited successfully.
+    Completed { exit_code: i32 },
+    /// The monitored process exited with a non-zero status.
+    Failed {
+        exit_code: i32,
+        stderr_tail: Option<String>,
+    },
+    /// The monitored process was killed due to timeout.
+    TimedOut,
+    /// The monitored process was stopped by the user.
+    Cancelled,
+}
+
+/// An event produced by a background monitor process.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct MonitorEvent {
+    /// Unique identifier for this event.
+    pub id: String,
+    /// Name of the monitor that produced this event.
+    pub monitor_name: String,
+    /// Monotonically increasing sequence number within this thread's monitor state.
+    pub sequence: u64,
+    /// What kind of event this is.
+    pub kind: MonitorEventKind,
+    /// Human-readable summary for the model.
+    pub summary: String,
+    /// Whether this event can wake an idle session.
+    pub wake_policy: MonitorWakePolicy,
+}
+
+pub const MAX_MONITOR_EVENT_SUMMARY_BYTES: usize = 32 * 1024;
+const MONITOR_EVENT_TRUNCATION_MARKER: &str = "\n... monitor event truncated ...";
+
+fn bound_monitor_event_text(text: &str) -> String {
+    if text.len() <= MAX_MONITOR_EVENT_SUMMARY_BYTES {
+        return text.to_string();
+    }
+    let text_budget =
+        MAX_MONITOR_EVENT_SUMMARY_BYTES.saturating_sub(MONITOR_EVENT_TRUNCATION_MARKER.len());
+    format!(
+        "{}{}",
+        take_bytes_at_char_boundary(text, text_budget),
+        MONITOR_EVENT_TRUNCATION_MARKER,
+    )
+}
+
+impl MonitorEvent {
+    pub fn kind_label(&self) -> &'static str {
+        match &self.kind {
+            MonitorEventKind::OutputBatch => "output",
+            MonitorEventKind::Completed { .. } => "completed",
+            MonitorEventKind::Failed { .. } => "failed",
+            MonitorEventKind::TimedOut => "timed_out",
+            MonitorEventKind::Cancelled => "cancelled",
+        }
+    }
+
+    /// Bounds all free-form text before the event reaches UI or model queues.
+    pub fn into_bounded(mut self) -> Self {
+        self.summary = bound_monitor_event_text(&self.summary);
+        if let MonitorEventKind::Failed { stderr_tail, .. } = &mut self.kind
+            && let Some(tail) = stderr_tail
+        {
+            *tail = bound_monitor_event_text(tail);
+        }
+        self
+    }
+
+    pub fn should_trigger_turn(&self) -> bool {
+        matches!(self.wake_policy, MonitorWakePolicy::AttachOrWake)
+    }
+}
+
+#[cfg(test)]
+#[path = "protocol_monitor_event_tests.rs"]
+mod monitor_event_tests;
+
+/// TUI-facing notification for a background monitor event.
+/// This is emitted independently of model turns so the UI can display
+/// monitor output in real time, even while foreground tools are executing.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct MonitorNotificationEvent {
+    pub monitor_name: String,
+    pub summary: String,
+    pub kind: String,
+}
+
 impl Op {
     pub fn kind(&self) -> &'static str {
         match self {
@@ -1446,6 +1550,11 @@ pub enum EventMsg {
     ImageGenerationBegin(ImageGenerationBeginEvent),
 
     ImageGenerationEnd(ImageGenerationEndEvent),
+
+    /// Background monitor event notification for TUI display.
+    /// Delivered independently of model turns so the UI can show monitor
+    /// output in real time while tools are executing.
+    MonitorNotification(MonitorNotificationEvent),
 
     /// Notification that the server is about to execute a command.
     ExecCommandBegin(ExecCommandBeginEvent),

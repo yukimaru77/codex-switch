@@ -6442,6 +6442,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         unified_exec_manager: UnifiedExecProcessManager::new(
             config.background_terminal_max_timeout,
         ),
+        monitor_manager: Default::default(),
         elicitations: crate::elicitation::ElicitationService::new(),
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
@@ -8722,6 +8723,7 @@ where
         unified_exec_manager: UnifiedExecProcessManager::new(
             config.background_terminal_max_timeout,
         ),
+        monitor_manager: Default::default(),
         elicitations: crate::elicitation::ElicitationService::new(),
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),

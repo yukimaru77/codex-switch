@@ -18,6 +18,8 @@ use crate::tools::handlers::GetContextRemainingHandler;
 use crate::tools::handlers::ListAvailablePluginsToInstallHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
 use crate::tools::handlers::ListMcpResourcesHandler;
+use crate::tools::handlers::MonitorHandler;
+use crate::tools::handlers::MonitorToolKind;
 use crate::tools::handlers::NewContextWindowHandler;
 use crate::tools::handlers::PlanHandler;
 use crate::tools::handlers::ReadMcpResourceHandler;
@@ -1098,6 +1100,15 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
     if features.enabled(Feature::UnifiedExec) {
         registry.add(ExecCommandHandler::new(options));
         registry.add(WriteStdinHandler);
+        if features.enabled(Feature::Monitor) {
+            for kind in [
+                MonitorToolKind::Start,
+                MonitorToolKind::Stop,
+                MonitorToolKind::List,
+            ] {
+                registry.add(MonitorHandler::new(kind, options));
+            }
+        }
     } else {
         // Managed requirements are the only configuration path that can keep
         // unified exec disabled. Preserve command execution without exposing a

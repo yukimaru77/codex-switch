@@ -1304,6 +1304,19 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .await;
         }
 
+        EventMsg::MonitorNotification(event) => {
+            outgoing
+                .send_server_notification(ServerNotification::MonitorNotification(
+                    codex_app_server_protocol::MonitorNotificationNotification {
+                        thread_id: conversation_id.to_string(),
+                        monitor_name: event.monitor_name,
+                        summary: event.summary,
+                        kind: event.kind,
+                    },
+                ))
+                .await;
+        }
+
         _ => {}
     }
 }
@@ -2208,6 +2221,7 @@ mod tests {
     use codex_protocol::protocol::GuardianAssessmentStatus;
     use codex_protocol::protocol::ItemCompletedEvent;
     use codex_protocol::protocol::ItemStartedEvent;
+    use codex_protocol::protocol::MonitorNotificationEvent;
     use codex_protocol::protocol::RateLimitSnapshot;
     use codex_protocol::protocol::RateLimitWindow;
     use codex_protocol::protocol::SessionSource;
@@ -3505,6 +3519,39 @@ mod tests {
                 })
             );
         }
+
+        apply_bespoke_event_handling(
+            Event {
+                id: "monitor-1".to_string(),
+                msg: EventMsg::MonitorNotification(MonitorNotificationEvent {
+                    monitor_name: "test-watcher".to_string(),
+                    summary: "3 tests passed".to_string(),
+                    kind: "output".to_string(),
+                }),
+            },
+            conversation_id,
+            Arc::clone(&conversation),
+            Arc::clone(&thread_manager),
+            outgoing,
+            Arc::clone(&thread_state),
+            thread_watch_manager,
+            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
+            "test-provider".to_string(),
+        )
+        .await;
+
+        assert_eq!(
+            serde_json::to_value(recv_broadcast_notification(&mut rx).await?)?,
+            json!({
+                "method": "monitor/notification",
+                "params": {
+                    "threadId": conversation_id.to_string(),
+                    "monitorName": "test-watcher",
+                    "summary": "3 tests passed",
+                    "kind": "output",
+                }
+            })
+        );
         Ok(())
     }
 

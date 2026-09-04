@@ -314,6 +314,7 @@ export type { ModelUpgradeInfo } from "./ModelUpgradeInfo";
 export type { ModelVerification } from "./ModelVerification";
 export type { ModelVerificationNotification } from "./ModelVerificationNotification";
 export type { ModelsRequirements } from "./ModelsRequirements";
+export type { MonitorNotificationNotification } from "./MonitorNotificationNotification";
 export type { MultiAgentVersion } from "./MultiAgentVersion";
 export type { NetworkAccess } from "./NetworkAccess";
 export type { NetworkApprovalContext } from "./NetworkApprovalContext";

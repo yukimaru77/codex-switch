@@ -801,6 +801,28 @@ impl UnifiedExecProcessManager {
         context: &UnifiedExecContext,
         request: WriteStdinRequest<'_>,
     ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+        self.write_stdin_inner(context, request, MIN_EMPTY_YIELD_TIME_MS)
+            .await
+    }
+
+    /// Polls a process for a background monitor without imposing the interactive
+    /// tool's five-second minimum wait for empty stdin.
+    pub(crate) async fn poll_process(
+        &self,
+        context: &UnifiedExecContext,
+        request: WriteStdinRequest<'_>,
+    ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+        debug_assert!(request.input.is_empty());
+        self.write_stdin_inner(context, request, MIN_YIELD_TIME_MS)
+            .await
+    }
+
+    async fn write_stdin_inner(
+        &self,
+        context: &UnifiedExecContext,
+        request: WriteStdinRequest<'_>,
+        minimum_empty_yield_time_ms: u64,
+    ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
         let process_id = request.process_id;
 
         // Different terminal sessions can be polled concurrently, but reads and
@@ -931,7 +953,10 @@ impl UnifiedExecProcessManager {
             // writes keep a fixed max cap so interactive stdin remains responsive.
             let time_ms = request.yield_time_ms.max(MIN_YIELD_TIME_MS);
             if request.input.is_empty() {
-                time_ms.clamp(MIN_EMPTY_YIELD_TIME_MS, self.max_write_stdin_yield_time_ms)
+                time_ms.clamp(
+                    minimum_empty_yield_time_ms,
+                    self.max_write_stdin_yield_time_ms,
+                )
             } else {
                 time_ms.min(MAX_YIELD_TIME_MS)
             }
@@ -1713,6 +1738,21 @@ impl UnifiedExecProcessManager {
 
         unregister_network_approval_for_entry(&entry).await;
         true
+    }
+
+    pub(crate) async fn terminate_process_by_call_id(&self, call_id: &str) -> bool {
+        let process_id = {
+            let store = self.process_store.lock().await;
+            store
+                .processes
+                .values()
+                .find(|entry| entry.call_id == call_id)
+                .map(|entry| entry.process_id)
+        };
+        let Some(process_id) = process_id else {
+            return false;
+        };
+        self.terminate_process(process_id).await
     }
 }
 
