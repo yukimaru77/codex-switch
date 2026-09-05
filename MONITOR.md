@@ -1,5 +1,8 @@
 # Local Monitor implementation
 
+This build also restores the user's env switch feature; see `ENV_SWITCH.md`
+for routing behavior and the combined Docker/Monitor integration test.
+
 Based on the official `rust-v0.153.4` release (3d2ee51ca2).
 The watcher design was adapted from yaanfpv/codex commit
 ae7dbe6aecf15dd7c1747a8512acda004d38d6a5, linked in openai/codex#29922.
@@ -85,10 +88,13 @@ reports `monitor` as enabled. `~/.codex/config.toml` has `features.monitor = tru
 Source: `/Users/nonaka/tasks/codex-monitor-v0.153.4`, branch `monitor-v0.153.4`.
 Backups: `/Users/nonaka/.local/share/codex-monitor/v0.153.4/codex.stock` and
 `config.toml.before-monitor` in the same directory. The installed build is also
-retained there as `codex.monitor` (a stripped, ad-hoc-signed development build).
+retained there as `codex.monitor` (the initial Monitor-only build). The combined
+env-switch/Monitor build is saved as `codex.env-switch-monitor`; both are
+stripped, ad-hoc-signed development builds.
 Validation logs are in the `validation/` subdirectory and generated, unaccepted
-snapshot results are in `test-snapshots/`. Generated Cargo build artifacts were
-removed after validation to recover disk space; rebuild from source when needed.
+snapshot results are in `test-snapshots/`. The initial Monitor-only build's
+Cargo artifacts were removed to recover disk space. The subsequent combined
+build uses smaller build settings and retains its artifacts; see `ENV_SWITCH.md`.
 
 To revert the CLI, copy `codex.stock` to a new sibling file in
 `/opt/homebrew/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/`,
