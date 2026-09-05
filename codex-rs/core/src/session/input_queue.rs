@@ -79,6 +79,7 @@ pub(crate) struct TurnInputQueue {
 pub(crate) struct InputQueue {
     activity_tx: watch::Sender<InputQueueActivity>,
     mailbox_pending_mails: Mutex<VecDeque<PendingMailboxCommunication>>,
+    monitor_pending: Mutex<VecDeque<crate::context::MonitorNotification>>,
 }
 
 struct PendingMailboxCommunication {
@@ -93,6 +94,7 @@ impl InputQueue {
         Self {
             activity_tx,
             mailbox_pending_mails: Mutex::new(VecDeque::new()),
+            monitor_pending: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -137,6 +139,26 @@ impl InputQueue {
 
     pub(crate) async fn has_pending_mailbox_items(&self) -> bool {
         !self.mailbox_pending_mails.lock().await.is_empty()
+            || !self.monitor_pending.lock().await.is_empty()
+    }
+
+    pub(crate) async fn enqueue_monitor_notification(
+        &self,
+        mut item: crate::context::MonitorNotification,
+    ) {
+        let mut pending = self.monitor_pending.lock().await;
+        if pending.len() >= 32 {
+            pending.pop_front();
+            item = crate::context::MonitorNotification::new(
+                item.description,
+                format!(
+                    "[older monitor notification dropped: queue full]\n{}",
+                    item.body
+                ),
+            );
+        }
+        pending.push_back(item);
+        self.activity_tx.send_replace(InputQueueActivity::Mailbox);
     }
 
     pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
@@ -145,6 +167,7 @@ impl InputQueue {
             .await
             .iter()
             .any(|mail| mail.communication.trigger_turn)
+            || !self.monitor_pending.lock().await.is_empty()
     }
 
     pub(crate) async fn drain_mailbox_input_items(&self) -> (Vec<TurnInput>, TurnStartOptions) {
@@ -179,10 +202,13 @@ impl InputQueue {
                     .filter(|id| !id.trim().is_empty())
             })
             .map(str::to_string);
-        let items = pending_mails
+        let mut items: Vec<TurnInput> = pending_mails
             .into_iter()
             .map(|mail| TurnInput::InterAgentCommunication(mail.communication))
             .collect();
+        items.extend(self.monitor_pending.lock().await.drain(..).map(|item| {
+            TurnInput::ResponseItem(crate::context::ContextualUserFragment::into(item).into())
+        }));
         (items, start_options)
     }
 
@@ -426,6 +452,19 @@ mod tests {
             content.to_string(),
             trigger_turn,
         )
+    }
+
+    #[tokio::test]
+    async fn monitor_queue_is_bounded_and_reports_overflow() {
+        let queue = InputQueue::new();
+        for _ in 0..40 {
+            queue.enqueue_monitor_notification(crate::context::MonitorNotification::new("test", "output")).await;
+        }
+        assert!(queue.has_trigger_turn_mailbox_items().await);
+        let (items, _) = queue.drain_mailbox_input_items().await;
+        assert_eq!(items.len(), 32);
+        assert!(serde_json::to_string(&items).unwrap().contains("queue full"));
+        assert!(!queue.has_trigger_turn_mailbox_items().await);
     }
 
     #[tokio::test]

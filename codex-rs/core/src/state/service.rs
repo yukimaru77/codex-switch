@@ -19,6 +19,7 @@ use crate::tools::code_mode::CodeModeService;
 use crate::tools::handlers::ToolSearchHandlerCache;
 use crate::tools::network_approval::NetworkApprovalService;
 use crate::tools::sandboxing::ApprovalStore;
+use crate::unified_exec::MonitorManager;
 use crate::unified_exec::UnifiedExecProcessManager;
 use arc_swap::ArcSwap;
 use arc_swap::ArcSwapOption;
@@ -51,6 +52,7 @@ pub(crate) struct SessionServices {
     pub(crate) mcp_handler_cache: McpHandlerCache,
     pub(crate) unified_exec_manager: UnifiedExecProcessManager,
     pub(crate) elicitations: ElicitationService,
+    pub(crate) monitor_manager: MonitorManager,
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) shell_zsh_path: Option<PathBuf>,
     #[cfg_attr(not(unix), allow(dead_code))]

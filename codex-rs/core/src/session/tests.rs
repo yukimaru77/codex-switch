@@ -6521,6 +6521,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             config.background_terminal_max_timeout,
         ),
         elicitations: crate::elicitation::ElicitationService::new(),
+        monitor_manager: MonitorManager::new(),
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
         analytics_events_client: AnalyticsEventsClient::new(
@@ -8821,6 +8822,7 @@ where
             config.background_terminal_max_timeout,
         ),
         elicitations: crate::elicitation::ElicitationService::new(),
+        monitor_manager: MonitorManager::new(),
         shell_zsh_path: None,
         main_execve_wrapper_exe: config.main_execve_wrapper_exe.clone(),
         analytics_events_client: AnalyticsEventsClient::new(

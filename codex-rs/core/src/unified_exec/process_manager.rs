@@ -479,8 +479,30 @@ impl UnifiedExecProcessManager {
         request: ExecCommandRequest,
         context: &UnifiedExecContext,
     ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
-        self.exec_command_inner(request, context, /*completion*/ None)
-            .await
+        self.exec_command_inner(
+            request, context, /*completion*/ None, /*monitor_process*/ None,
+        )
+        .await
+    }
+
+    pub(crate) async fn exec_monitor_command(
+        &self,
+        request: ExecCommandRequest,
+        context: &UnifiedExecContext,
+    ) -> Result<(ExecCommandToolOutput, Arc<UnifiedExecProcess>), UnifiedExecError> {
+        let mut process = None;
+        let output = self
+            .exec_command_inner(
+                request,
+                context,
+                /*completion*/ None,
+                Some(&mut process),
+            )
+            .await?;
+        Ok((
+            output,
+            process.expect("successful execution publishes its process"),
+        ))
     }
 
     pub(super) async fn exec_command_inner(
@@ -488,6 +510,7 @@ impl UnifiedExecProcessManager {
         request: ExecCommandRequest,
         context: &UnifiedExecContext,
         mut completion: Option<&mut Completion<'_>>,
+        monitor_process: Option<&mut Option<Arc<UnifiedExecProcess>>>,
     ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
         let cwd = request.cwd.clone();
         let process = self
@@ -507,6 +530,9 @@ impl UnifiedExecProcessManager {
             permissions,
         } = attempt;
         let process = Arc::new(process);
+        if let Some(slot) = monitor_process {
+            *slot = Some(Arc::clone(&process));
+        }
         if let Some(completion) = completion.as_ref() {
             let _ = completion.process.set(Arc::clone(&process));
         }

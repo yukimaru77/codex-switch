@@ -9,6 +9,7 @@ use super::InternalModelContextFragment;
 use super::LegacyApplyPatchExecCommandWarning;
 use super::LegacyModelMismatchWarning;
 use super::LegacyUnifiedExecProcessLimitWarning;
+use super::MonitorNotification;
 use super::RecommendedPluginsInstructions;
 use super::SubagentNotification;
 use super::TurnAborted;
@@ -29,6 +30,7 @@ const CONTEXTUAL_USER_FRAGMENT_MATCHERS: &[fn(&str) -> bool] = &[
     LegacyUnifiedExecProcessLimitWarning::matches_text,
     LegacyApplyPatchExecCommandWarning::matches_text,
     LegacyModelMismatchWarning::matches_text,
+    MonitorNotification::matches_text,
 ];
 
 /// Uses host annotations rather than text markers to identify user authorization changes.

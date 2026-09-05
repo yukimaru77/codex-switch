@@ -413,6 +413,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
     sess.hooks().shutdown().await;
     sess.async_hook_results.close();
     while sess.async_hook_results.try_recv().is_ok() {}
+    sess.services.monitor_manager.abort_all().await;
     sess.services
         .unified_exec_manager
         .terminate_all_processes()
