@@ -1723,6 +1723,176 @@ async fn token_usage_update_refreshes_status_line_with_runtime_context_window() 
 }
 
 #[tokio::test]
+async fn thread_settings_update_refreshes_status_line_with_env_switch_badge() {
+    let mut app = make_test_app().await;
+    let thread_id = ThreadId::new();
+    let session = test_thread_session(thread_id, test_path_buf("/tmp/local-project"));
+
+    app.active_thread_id = Some(thread_id);
+    app.chat_widget.handle_thread_session(session);
+    app.chat_widget.setup_status_line(
+        vec![crate::bottom_pane::StatusLineItem::CurrentDir],
+        /*use_theme_colors*/ true,
+    );
+
+    let expected_cwd = test_path_display("/tmp/local-project");
+    assert_eq!(app.chat_widget.status_line_text(), Some(expected_cwd));
+
+    app.handle_thread_event_now(ThreadBufferedEvent::Notification(Box::new(
+        env_switch_thread_settings_updated(thread_id),
+    )));
+
+    assert_eq!(
+        app.chat_widget.status_line_text(),
+        Some("🔗 example-host".to_string())
+    );
+}
+
+#[tokio::test]
+async fn replayed_thread_settings_update_restores_env_switch_badge() {
+    let mut app = make_test_app().await;
+    let thread_id = ThreadId::new();
+    app.chat_widget.setup_status_line(
+        vec![crate::bottom_pane::StatusLineItem::CurrentDir],
+        /*use_theme_colors*/ true,
+    );
+
+    app.replay_thread_snapshot(
+        ThreadEventSnapshot {
+            session: Some(test_thread_session(
+                thread_id,
+                test_path_buf("/tmp/local-project"),
+            )),
+            turns: Vec::new(),
+            events: vec![ThreadBufferedEvent::Notification(Box::new(
+                env_switch_thread_settings_updated(thread_id),
+            ))],
+            input_state: None,
+        },
+        /*resume_restored_queue*/ false,
+    );
+
+    assert_eq!(
+        app.chat_widget.status_line_text(),
+        Some("🔗 example-host".to_string())
+    );
+}
+
+#[tokio::test]
+async fn replayed_snapshot_restores_env_switch_badge_after_session_refresh_rebases_buffer() {
+    let mut app = make_test_app().await;
+    let thread_id = ThreadId::new();
+    let mut store = ThreadEventStore::new_with_session(
+        /*capacity*/ 4,
+        test_thread_session(thread_id, test_path_buf("/tmp/local-project")),
+        Vec::new(),
+    );
+    store.push_notification(env_switch_thread_settings_updated(thread_id));
+    store.rebase_buffer_after_session_refresh();
+
+    app.chat_widget.setup_status_line(
+        vec![crate::bottom_pane::StatusLineItem::CurrentDir],
+        /*use_theme_colors*/ true,
+    );
+    app.replay_thread_snapshot(store.snapshot(), /*resume_restored_queue*/ false);
+
+    assert_eq!(
+        app.chat_widget.status_line_text(),
+        Some("🔗 example-host".to_string())
+    );
+}
+
+#[tokio::test]
+async fn refreshed_snapshot_session_keeps_env_switch_badge_update_for_replay() {
+    let mut app = make_test_app().await;
+    let thread_id = ThreadId::new();
+    let initial_session = ThreadSessionState {
+        model: String::new(),
+        rollout_path: None,
+        ..test_thread_session(thread_id, test_path_buf("/tmp/local-project"))
+    };
+    app.thread_event_channels.insert(
+        thread_id,
+        ThreadEventChannel::new_with_session(
+            /*capacity*/ 4,
+            initial_session.clone(),
+            Vec::new(),
+        ),
+    );
+
+    {
+        let channel = app
+            .thread_event_channels
+            .get(&thread_id)
+            .expect("thread channel");
+        let mut store = channel.store.lock().await;
+        store.push_notification(env_switch_thread_settings_updated(thread_id));
+    }
+
+    let mut snapshot = app
+        .thread_event_channels
+        .get(&thread_id)
+        .expect("thread channel")
+        .store
+        .lock()
+        .await
+        .snapshot();
+    app.apply_refreshed_snapshot_thread(
+        thread_id,
+        AppServerStartedThread {
+            session: test_thread_session(thread_id, test_path_buf("/tmp/local-project")),
+            turns: Vec::new(),
+            blocks_direct_input: false,
+            task_tools_available: false,
+        },
+        &mut snapshot,
+    )
+    .await;
+
+    app.chat_widget.setup_status_line(
+        vec![crate::bottom_pane::StatusLineItem::CurrentDir],
+        /*use_theme_colors*/ true,
+    );
+    app.replay_thread_snapshot(snapshot, /*resume_restored_queue*/ false);
+
+    assert_eq!(
+        app.chat_widget.status_line_text(),
+        Some("🔗 example-host".to_string())
+    );
+}
+
+fn env_switch_thread_settings_updated(thread_id: ThreadId) -> ServerNotification {
+    ServerNotification::ThreadSettingsUpdated(ThreadSettingsUpdatedNotification {
+        thread_id: thread_id.to_string(),
+        thread_settings: ThreadSettings {
+            cwd: test_absolute_path("/tmp/local-project"),
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::User,
+            sandbox_policy: codex_app_server_protocol::SandboxPolicy::ReadOnly {
+                network_access: false,
+            },
+            active_permission_profile: None,
+            model: "gpt-test".to_string(),
+            model_provider: "test-provider".to_string(),
+            service_tier: None,
+            effort: None,
+            summary: None,
+            collaboration_mode: CollaborationMode {
+                mode: ModeKind::Default,
+                settings: Settings {
+                    model: "gpt-test".to_string(),
+                    reasoning_effort: None,
+                    developer_instructions: None,
+                },
+            },
+            personality: None,
+            multi_agent_mode: Default::default(),
+            active_environment_id: Some("ssh:example-host".to_string()),
+        },
+    })
+}
+
+#[tokio::test]
 async fn collab_receiver_notification_caches_thread_without_app_server_read() {
     let mut app = make_test_app().await;
     let receiver_thread_id =
@@ -8435,6 +8605,7 @@ async fn inactive_thread_settings_notification_updates_cached_collaboration_mode
             collaboration_mode: collaboration_mode.clone(),
             multi_agent_mode: Default::default(),
             personality: Some(Personality::Pragmatic),
+            active_environment_id: None,
         },
     };
     app.enqueue_thread_notification(

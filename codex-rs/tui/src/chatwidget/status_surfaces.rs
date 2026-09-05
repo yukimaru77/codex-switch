@@ -672,10 +672,37 @@ impl ChatWidget {
             StatusLineItem::ModelWithReasoning => Some(self.model_with_reasoning_display_name()),
             StatusLineItem::Reasoning => Some(self.reasoning_display_name()),
             StatusLineItem::CurrentDir => {
-                Some(format_directory_display(
-                    self.status_line_cwd(),
-                    /*max_width*/ None,
-                ))
+                // When the default execution target is a non-local
+                // environment (docker/ssh), show the environment badge instead
+                // of the local cwd.
+                //
+                // The badge may contain a very long container or host name, so
+                // we truncate it to the same width budget used by other status-
+                // line items.  The emoji prefix ("🐳 " or "🔗 ") is preserved;
+                // only the name portion is truncated so the environment type
+                // remains immediately recognisable.
+                if let Some(badge) = &self.env_switch_badge {
+                    const MAX_NAME_GRAPHEMES: usize = 20;
+                    // Split the known prefixes off so the emoji is never cut.
+                    let (prefix, name) = if let Some(name) = badge.strip_prefix("🐳 ") {
+                        ("🐳 ", name)
+                    } else if let Some(name) = badge.strip_prefix("🔗 ") {
+                        ("🔗 ", name)
+                    } else {
+                        // Unknown format: truncate the whole string.
+                        let truncated =
+                            Self::truncate_terminal_title_part(badge.clone(), MAX_NAME_GRAPHEMES);
+                        return Some(truncated);
+                    };
+                    let truncated_name =
+                        Self::truncate_terminal_title_part(name.to_string(), MAX_NAME_GRAPHEMES);
+                    Some(format!("{prefix}{truncated_name}"))
+                } else {
+                    Some(format_directory_display(
+                        self.status_line_cwd(),
+                        /*max_width*/ None,
+                    ))
+                }
             }
             StatusLineItem::ProjectRoot => self.status_line_project_root_name(),
             StatusLineItem::Hostname => os_host_name(),

@@ -5642,6 +5642,96 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
     );
 }
 
+/// When `env_switch` moves execution into a docker container, the status line
+/// `current-dir` slot shows the container badge instead of the local cwd.
+#[tokio::test]
+async fn env_switch_docker_badge_replaces_cwd_in_status_line() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.config.tui_status_line = Some(vec!["model".to_string(), "current-dir".to_string()]);
+    chat.config.cwd = test_path_buf("/tmp/project").abs();
+    chat.env_switch_badge = Some("🐳 env-remote-test".to_string());
+    chat.refresh_status_line();
+
+    assert_eq!(
+        status_line_text(&chat),
+        Some("gpt-5.4 · 🐳 env-remote-test".to_string())
+    );
+    insta::assert_snapshot!(status_line_text(&chat).unwrap(), @"gpt-5.4 · 🐳 env-remote-test");
+}
+
+/// When the default execution target is an SSH host, the status line shows the
+/// SSH badge.
+#[tokio::test]
+async fn env_switch_ssh_badge_replaces_cwd_in_status_line() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.config.tui_status_line = Some(vec!["model".to_string(), "current-dir".to_string()]);
+    chat.config.cwd = test_path_buf("/tmp/project").abs();
+    chat.env_switch_badge = Some("🔗 example-host".to_string());
+    chat.refresh_status_line();
+
+    assert_eq!(
+        status_line_text(&chat),
+        Some("gpt-5.4 · 🔗 example-host".to_string())
+    );
+    insta::assert_snapshot!(status_line_text(&chat).unwrap(), @"gpt-5.4 · 🔗 example-host");
+}
+
+/// After reverting to local (`env_switch` target=local), the badge is cleared
+/// and the cwd is shown again.
+#[tokio::test]
+async fn env_switch_local_revert_restores_cwd_in_status_line() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.config.tui_status_line = Some(vec!["model".to_string(), "current-dir".to_string()]);
+    chat.config.cwd = test_path_buf("/tmp/project").abs();
+    // Simulate an earlier docker switch followed by revert.
+    chat.env_switch_badge = Some("🐳 env-remote-test".to_string());
+    chat.env_switch_badge = None;
+    chat.refresh_status_line();
+
+    let expected_cwd = test_path_display("/tmp/project");
+    assert_eq!(
+        status_line_text(&chat),
+        Some(format!("gpt-5.4 · {expected_cwd}"))
+    );
+}
+
+/// A docker container name that exceeds the 20-grapheme limit is truncated in
+/// the status line, preserving the "🐳 " prefix so the environment type remains
+/// immediately recognisable.
+#[tokio::test]
+async fn env_switch_docker_badge_long_name_is_truncated_in_status_line() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.config.tui_status_line = Some(vec!["current-dir".to_string()]);
+    chat.config.cwd = test_path_buf("/tmp/project").abs();
+    // Container name is 40 graphemes — well over the 20-grapheme limit.
+    chat.env_switch_badge = Some("🐳 a-very-long-container-name-that-exceeds-limit".to_string());
+    chat.refresh_status_line();
+
+    // Expect: prefix preserved, name truncated to 17 graphemes + "..."
+    assert_eq!(
+        status_line_text(&chat),
+        Some("🐳 a-very-long-conta...".to_string())
+    );
+}
+
+/// An SSH host name that exceeds the 20-grapheme limit is truncated in the
+/// status line, preserving the "🔗 " prefix.
+#[tokio::test]
+async fn env_switch_ssh_badge_long_name_is_truncated_in_status_line() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.config.tui_status_line = Some(vec!["current-dir".to_string()]);
+    chat.config.cwd = test_path_buf("/tmp/project").abs();
+    // Host name is 40 graphemes — well over the 20-grapheme limit.
+    chat.env_switch_badge = Some("🔗 a-very-long-hostname-that-exceeds-the-limit".to_string());
+    chat.refresh_status_line();
+
+    // Expect: prefix preserved, name truncated to 17 graphemes + "..."
+    assert_eq!(
+        status_line_text(&chat),
+        Some("🔗 a-very-long-hostn...".to_string())
+    );
+}
+
 // E2E vt100 snapshot for complex markdown with indented and nested fenced code blocks
 #[tokio::test]
 async fn chatwidget_markdown_code_blocks_vt100_snapshot() {
