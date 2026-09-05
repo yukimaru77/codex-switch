@@ -16,7 +16,10 @@ pub struct ViewImageToolOptions {
 pub fn create_view_image_tool(options: ViewImageToolOptions) -> ToolSpec {
     let mut properties = BTreeMap::from([(
         "path".to_string(),
-        JsonSchema::string(Some("Local filesystem path to an image file.".to_string())),
+        JsonSchema::string(Some(
+            "Filesystem path to an image file in the selected execution environment. Relative paths resolve against that environment's cwd."
+                .to_string(),
+        )),
     )]);
     if options.can_request_original_image_detail && !options.unified_image_budget {
         properties.insert(
@@ -33,7 +36,11 @@ pub fn create_view_image_tool(options: ViewImageToolOptions) -> ToolSpec {
         properties.insert(
             "environment_id".to_string(),
             JsonSchema::string(Some(
-                "Environment id from <environment_context>. Omit to use the primary environment."
+                "Read the image from a specific execution target: pass an `environment_id` \
+                 listed by env_status/env_list or returned by env_switch when available \
+                 (e.g. `docker:container-name` or `ssh:hostname>docker:container-name`) \
+                 to read inside that target. Omit it to use the current default execution \
+                 environment, which env_switch can update when available."
                     .to_string(),
             )),
         );
@@ -41,7 +48,7 @@ pub fn create_view_image_tool(options: ViewImageToolOptions) -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: VIEW_IMAGE_TOOL_NAME.to_string(),
-        description: "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk."
+        description: "View an image file from the selected execution environment when visual inspection is needed. Use this for images already available on disk."
             .to_string(),
         strict: false,
         defer_loading: None,
@@ -72,3 +79,7 @@ fn view_image_output_schema(options: ViewImageToolOptions) -> Value {
     }
     schema
 }
+
+#[cfg(test)]
+#[path = "view_image_spec_tests.rs"]
+mod tests;

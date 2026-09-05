@@ -10,6 +10,9 @@ use core_test_support::test_codex::local_selections;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
+use std::future::Future;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::sync::OnceLock;
 
 use anyhow::Context;
@@ -65,9 +68,31 @@ use pretty_assertions::assert_eq;
 use regex_lite::Regex;
 use serde_json::Value;
 use serde_json::json;
+use serial_test::serial;
 use tokio::time::Duration;
 
 const UNIFIED_EXEC_LAGGED_OUTPUT_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[cfg(unix)]
+fn run_env_switch_advisory_test<F, Fut>(make_future: F) -> Result<()>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<()>> + 'static,
+{
+    std::thread::Builder::new()
+        .name("env-switch-advisory-test".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime")
+                .block_on(make_future())
+        })
+        .expect("spawn env_switch advisory test thread")
+        .join()
+        .expect("env_switch advisory test thread panicked")
+}
 
 fn extract_output_text(item: &Value) -> Option<&str> {
     item.get("output").and_then(|value| match value {
@@ -846,6 +871,165 @@ async fn unified_exec_respects_workdir_override() -> Result<()> {
 
     let requests = request_log.requests();
     assert!(!requests.is_empty(), "expected at least one POST request");
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+#[serial(env_switch_advisory)]
+fn unified_exec_advises_env_switch_after_raw_ssh() -> Result<()> {
+    run_env_switch_advisory_test(unified_exec_advises_env_switch_after_raw_ssh_inner)
+}
+
+#[cfg(unix)]
+async fn unified_exec_advises_env_switch_after_raw_ssh_inner() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+    skip_if_host_windows!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let mut builder = test_codex().with_model("gpt-5.2").with_config(|config| {
+        config
+            .features
+            .enable(Feature::UnifiedExec)
+            .expect("test config should allow unified exec feature update");
+        config
+            .features
+            .enable(Feature::EnvSwitch)
+            .expect("test config should allow env_switch feature update");
+    });
+    let test = builder.build(&server).await?;
+
+    let ssh_path = test.config.cwd.join("ssh");
+    fs::write(&ssh_path, "#!/bin/sh\nprintf 'fake-ssh-output\\n'\n")?;
+    fs::set_permissions(&ssh_path, fs::Permissions::from_mode(0o755))?;
+
+    let call_id = "uexec-raw-ssh-advisory";
+    let args = json!({
+        "cmd": format!("{} example-host hostname", ssh_path.display()),
+        "yield_time_ms": 30000,
+    });
+
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "exec_command", &serde_json::to_string(&args)?),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_response_created("resp-2"),
+            ev_assistant_message("msg-1", "finished"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    let request_log = mount_sse_sequence(&server, responses).await;
+
+    submit_unified_exec_turn(&test, "run fake raw ssh", PermissionProfile::Disabled).await?;
+
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let output = request_log
+        .function_call_output_text(call_id)
+        .context("missing raw ssh function_call_output")?;
+    assert!(
+        output.contains("fake-ssh-output"),
+        "expected command output, got: {output}",
+    );
+    assert!(
+        output.contains("Advisory: this command used raw SSH/Docker")
+            && output.contains("env_switch")
+            && output.contains("environment_id")
+            && output.contains("compatible tools")
+            && output.contains("default"),
+        "expected env_switch advisory, got: {output}",
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+#[serial(env_switch_advisory)]
+fn unified_exec_advises_env_switch_with_explicit_environment_id() -> Result<()> {
+    run_env_switch_advisory_test(unified_exec_advises_env_switch_with_explicit_environment_id_inner)
+}
+
+#[cfg(unix)]
+async fn unified_exec_advises_env_switch_with_explicit_environment_id_inner() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+    skip_if_host_windows!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let mut builder = test_codex().with_model("gpt-5.2").with_config(|config| {
+        config
+            .features
+            .enable(Feature::UnifiedExec)
+            .expect("test config should allow unified exec feature update");
+        config
+            .features
+            .enable(Feature::EnvSwitch)
+            .expect("test config should allow env_switch feature update");
+    });
+    let test = builder.build(&server).await?;
+
+    let docker_path = test.config.cwd.join("docker");
+    fs::write(&docker_path, "#!/bin/sh\nprintf 'fake-docker-output\\n'\n")?;
+    fs::set_permissions(&docker_path, fs::Permissions::from_mode(0o755))?;
+
+    let call_id = "uexec-explicit-env-docker-advisory";
+    let args = json!({
+        "cmd": format!("{} exec example-container hostname", docker_path.display()),
+        "environment_id": "local",
+        "yield_time_ms": 30000,
+    });
+
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "exec_command", &serde_json::to_string(&args)?),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_response_created("resp-2"),
+            ev_assistant_message("msg-1", "finished"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    let request_log = mount_sse_sequence(&server, responses).await;
+
+    submit_unified_exec_turn(
+        &test,
+        "run fake explicit docker exec",
+        PermissionProfile::Disabled,
+    )
+    .await?;
+
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let output = request_log
+        .function_call_output_text(call_id)
+        .context("missing explicit environment docker function_call_output")?;
+    assert!(
+        output.contains("fake-docker-output"),
+        "expected command output, got: {output}",
+    );
+    assert!(
+        output.contains("Advisory: this command used raw SSH/Docker")
+            && output.contains("env_switch")
+            && output.contains("target=`local`")
+            && output.contains("env_status"),
+        "expected env_switch advisory even with explicit environment_id, got: {output}",
+    );
 
     Ok(())
 }

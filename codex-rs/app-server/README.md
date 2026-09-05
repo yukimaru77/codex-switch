@@ -205,6 +205,11 @@ Example with notification opt-out:
 - `thread/queue/start` — experimental; start the queue head or a selected queued submission when the thread is idle.
 - `thread/queue/changed` — experimental notification emitted with the changed `threadId`.
 - `thread/settings/updated` — experimental notification emitted to subscribed clients when a loaded thread’s effective next-turn settings change; includes `threadId` and the full `threadSettings`.
+
+  In this local env-switch build, `threadSettings.activeEnvironmentId` is the
+  runtime-selected SSH/Docker environment, or `null` for local execution.
+  `env_switch` also emits this notification to refresh the TUI badge without
+  persisting the transient execution selection as thread configuration.
 - `thread/status/changed` — notification emitted when a loaded thread’s status changes (`threadId` + new `status`).
 - `thread/archive` — move a thread’s rollout file into the archived directory and attempt to move any spawned descendant thread rollout files; returns `{}` on success and emits `thread/archived` for each archived thread.
 - `thread/delete` — hard-delete an active or archived thread and any spawned descendant threads; returns `{}` on success and emits `thread/deleted` for each deleted thread.

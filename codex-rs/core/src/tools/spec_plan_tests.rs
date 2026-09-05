@@ -1306,6 +1306,70 @@ async fn environment_tools_follow_the_step_context() {
 }
 
 #[tokio::test]
+async fn env_switch_feature_registers_environment_status_tools() {
+    let disabled = probe(|turn| {
+        set_feature(turn, Feature::EnvSwitch, /*enabled*/ false);
+    })
+    .await;
+    disabled.assert_visible_lacks(&["env_switch", "env_status", "env_list"]);
+    disabled.assert_registered_lacks(&["env_switch", "env_status", "env_list"]);
+
+    let multi_env_without_env_switch = probe(|turn| {
+        set_feature(turn, Feature::EnvSwitch, /*enabled*/ false);
+        duplicate_primary_environment(turn);
+    })
+    .await;
+    multi_env_without_env_switch.assert_visible_lacks(&["env_switch"]);
+    multi_env_without_env_switch.assert_registered_lacks(&["env_switch"]);
+    multi_env_without_env_switch.assert_visible_contains(&["env_status", "env_list"]);
+    multi_env_without_env_switch.assert_registered_contains(&["env_status", "env_list"]);
+
+    let enabled = probe(|turn| {
+        set_feature(turn, Feature::ShellTool, /*enabled*/ true);
+        set_feature(turn, Feature::UnifiedExec, /*enabled*/ true);
+        set_feature(turn, Feature::EnvSwitch, /*enabled*/ true);
+    })
+    .await;
+    enabled.assert_visible_contains(&["env_switch", "env_status", "env_list"]);
+    enabled.assert_registered_contains(&["env_switch", "env_status", "env_list"]);
+
+    let no_environment = probe(|turn| {
+        set_feature(turn, Feature::ShellTool, /*enabled*/ true);
+        set_feature(turn, Feature::UnifiedExec, /*enabled*/ true);
+        set_feature(turn, Feature::EnvSwitch, /*enabled*/ true);
+        turn.environments.environments.clear();
+    })
+    .await;
+    no_environment.assert_visible_lacks(&["env_switch", "env_status", "env_list"]);
+    no_environment.assert_registered_lacks(&["env_switch", "env_status", "env_list"]);
+}
+
+#[tokio::test]
+async fn env_switch_feature_registers_exec_tools_without_unified_exec() {
+    let one_shot_exec = probe(|turn| {
+        set_feature(turn, Feature::ShellTool, /*enabled*/ true);
+        set_feature(turn, Feature::UnifiedExec, /*enabled*/ false);
+        set_feature(turn, Feature::EnvSwitch, /*enabled*/ true);
+    })
+    .await;
+
+    one_shot_exec.assert_visible_contains(&[
+        "exec_command",
+        "write_stdin",
+        "env_switch",
+        "env_status",
+        "env_list",
+    ]);
+    one_shot_exec.assert_registered_contains(&[
+        "exec_command",
+        "write_stdin",
+        "env_switch",
+        "env_status",
+        "env_list",
+    ]);
+}
+
+#[tokio::test]
 async fn sleep_tool_follows_current_time_config() {
     let disabled = probe(|turn| {
         set_feature(turn, Feature::CurrentTimeReminder, /*enabled*/ true);

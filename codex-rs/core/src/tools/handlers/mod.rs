@@ -2,6 +2,11 @@ pub(crate) mod apply_patch;
 pub(crate) mod apply_patch_spec;
 mod current_time;
 mod dynamic;
+mod env_status;
+pub(crate) mod env_status_spec;
+mod env_switch;
+pub(crate) mod env_switch_spec;
+mod environment_routing;
 pub(crate) mod extension_tools;
 mod get_context_remaining;
 pub(crate) mod get_context_remaining_spec;
@@ -18,6 +23,7 @@ mod new_context_window;
 pub(crate) mod new_context_window_spec;
 mod plan;
 pub(crate) mod plan_spec;
+mod remote_command_advisory;
 mod request_permissions;
 mod request_plugin_install;
 pub(crate) mod request_plugin_install_spec;
@@ -46,7 +52,6 @@ use serde::Deserialize;
 use serde_json::Map;
 use serde_json::Value;
 
-use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::function_tool::FunctionCallError;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
@@ -58,6 +63,14 @@ use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 pub use current_time::CurrentTimeHandler;
 pub use dynamic::DynamicToolHandler;
+pub use env_status::EnvListHandler;
+pub use env_status::EnvStatusHandler;
+pub use env_switch::EnvSwitchHandler;
+pub(crate) use environment_routing::default_tool_environment_id;
+pub(crate) use environment_routing::dynamic_environment_visible_to_thread;
+pub(crate) use environment_routing::environment_selections_with_default;
+pub(crate) use environment_routing::environment_thread_keys;
+pub(crate) use environment_routing::resolve_tool_environment;
 pub use get_context_remaining::GetContextRemainingHandler;
 pub use list_available_plugins_to_install::ListAvailablePluginsToInstallHandler;
 pub use mcp::McpHandler;
@@ -66,6 +79,8 @@ pub use mcp_resource::ListMcpResourcesHandler;
 pub use mcp_resource::ReadMcpResourceHandler;
 pub use new_context_window::NewContextWindowHandler;
 pub use plan::PlanHandler;
+pub(crate) use remote_command_advisory::RemoteCommandAdvisoryOptions;
+pub(crate) use remote_command_advisory::remote_command_advisory;
 pub use request_permissions::RequestPermissionsHandler;
 pub use request_plugin_install::RequestPluginInstallHandler;
 pub use request_user_input::RequestUserInputHandler;
@@ -153,26 +168,6 @@ where
 {
     let _guard = AbsolutePathBufGuard::new(base_path);
     parse_arguments(arguments)
-}
-
-fn resolve_tool_environment<'a>(
-    environments: &'a TurnEnvironmentSnapshot,
-    environment_id: Option<&str>,
-) -> Result<Option<&'a TurnEnvironment>, FunctionCallError> {
-    environment_id.map_or_else(
-        || Ok(environments.primary()),
-        |environment_id| {
-            environments
-                .turn_environments()
-                .find(|environment| environment.selection.environment_id == environment_id)
-                .map(Some)
-                .ok_or_else(|| {
-                    FunctionCallError::RespondToModel(format!(
-                        "unknown turn environment id `{environment_id}`"
-                    ))
-                })
-        },
-    )
 }
 
 /// Validates feature/policy constraints for `with_additional_permissions` and

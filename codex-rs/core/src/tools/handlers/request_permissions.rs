@@ -57,6 +57,7 @@ impl RequestPermissionsHandler {
             payload,
             ..
         } = invocation;
+        let turn = &step_context.turn;
 
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,
@@ -69,12 +70,14 @@ impl RequestPermissionsHandler {
 
         let environment_args: RequestPermissionsEnvironmentArgs = parse_arguments(&arguments)?;
         let Some(turn_environment) = resolve_tool_environment(
-            &step_context.environments,
+            &session,
+            turn.as_ref(),
             environment_args.environment_id.as_deref(),
-        )?
+        )
+        .await?
         else {
             return Err(FunctionCallError::RespondToModel(
-                "request_permissions requires a primary environment".to_string(),
+                "request_permissions requires a default execution environment".to_string(),
             ));
         };
         let sandbox_context =

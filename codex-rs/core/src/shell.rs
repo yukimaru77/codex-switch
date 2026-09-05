@@ -85,6 +85,33 @@ pub fn get_shell_by_model_provided_path(shell_path: &PathBuf) -> Shell {
     codex_shell_command::shell_detect::get_shell_by_model_provided_path(shell_path).into()
 }
 
+/// Builds a [`Shell`] from a shell path reported by a remote environment.
+///
+/// Unlike [`get_shell_by_model_provided_path`], the path is kept verbatim:
+/// it refers to a binary on the remote host, so validating it against the
+/// local filesystem (and substituting a local shell on a miss) would send a
+/// host-only shell path to the remote. Paths with an unrecognized shell name
+/// are executed with `sh`-style `-c` argument formatting.
+pub(crate) fn shell_for_remote_path(shell_path: &std::path::Path) -> Shell {
+    let shell_type =
+        codex_shell_command::shell_detect::detect_shell_type(shell_path).unwrap_or(ShellType::Sh);
+    Shell {
+        shell_type,
+        shell_path: shell_path.to_path_buf(),
+    }
+}
+
+/// POSIX fallback used when a remote environment did not report a shell.
+///
+/// Never fall back to the local user shell for remote targets: its path
+/// (e.g. `/opt/homebrew/bin/bash`) usually does not exist on the remote.
+pub(crate) fn fallback_remote_shell() -> Shell {
+    Shell {
+        shell_type: ShellType::Sh,
+        shell_path: PathBuf::from("/bin/sh"),
+    }
+}
+
 pub fn get_shell(shell_type: ShellType) -> Option<Shell> {
     codex_shell_command::shell_detect::get_shell(shell_type).map(Into::into)
 }

@@ -63,6 +63,7 @@ use codex_connectors::connector_runtime_context_key;
 use codex_context_fragments::RenderedFragment;
 use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentManager;
+use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_execpolicy::prefix_rule_migration;
 use codex_extension_api::ConversationHistorySnapshot;
 use codex_extension_api::ExtensionDataInit;
@@ -363,6 +364,7 @@ use codex_protocol::protocol::SessionNetworkProxyRuntime;
 use codex_protocol::protocol::StreamErrorEvent;
 use codex_protocol::protocol::Submission;
 use codex_protocol::protocol::ThreadMemoryMode;
+use codex_protocol::protocol::ThreadSettingsAppliedEvent;
 use codex_protocol::protocol::TokenCountEvent;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TokenUsageInfo;
@@ -827,9 +829,11 @@ impl Session {
         // This task will run until Op::Shutdown is received.
         let session_for_loop = Arc::clone(&session);
         let session_loop_handle = tokio::spawn(async move {
-            submission_loop(session_for_loop, configured_config, rx_sub)
-                .instrument(info_span!("session_loop", thread_id = %thread_id))
-                .await;
+            Box::pin(
+                submission_loop(session_for_loop, configured_config, rx_sub)
+                    .instrument(info_span!("session_loop", thread_id = %thread_id)),
+            )
+            .await;
         });
         let io = SessionIo {
             tx_sub,
@@ -1280,7 +1284,7 @@ impl Session {
         }
     }
 
-    fn next_internal_sub_id(&self) -> String {
+    pub(crate) fn next_internal_sub_id(&self) -> String {
         let id = self
             .next_internal_sub_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1772,6 +1776,45 @@ impl Session {
             self.schedule_mcp_prewarm();
         }
         Ok(Some(commit))
+    }
+
+    /// Emits a `ThreadSettingsApplied` badge event that shows the
+    /// env_switch-selected default execution environment in TUI clients. This
+    /// does **not** require a `TurnContext` and does **not** persist the
+    /// selection into the thread's stored environment configuration; the
+    /// runtime default is tracked separately by `EnvironmentManager`.
+    ///
+    /// Passing `environment_id = LOCAL_ENVIRONMENT_ID` (or an empty string)
+    /// clears the non-local badge and makes the status line show the local cwd.
+    pub(crate) async fn emit_dynamic_environment_badge(&self, environment_id: &str) {
+        let snapshot = self.thread_config_snapshot().await;
+        let cwd = snapshot.cwd().clone();
+        let active_environment_id =
+            if environment_id.is_empty() || environment_id == LOCAL_ENVIRONMENT_ID {
+                None
+            } else {
+                Some(environment_id.to_string())
+            };
+        let msg = EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent {
+            thread_id: Some(self.thread_id()),
+            thread_settings: ThreadSettingsSnapshot {
+                model: snapshot.model,
+                model_provider_id: snapshot.model_provider_id,
+                service_tier: snapshot.service_tier,
+                approval_policy: snapshot.approval_policy,
+                approvals_reviewer: snapshot.approvals_reviewer,
+                permission_profile: snapshot.permission_profile,
+                active_permission_profile: snapshot.active_permission_profile,
+                cwd,
+                active_environment_id,
+                reasoning_effort: snapshot.reasoning_effort,
+                reasoning_summary: snapshot.reasoning_summary,
+                personality: snapshot.personality,
+                collaboration_mode: snapshot.collaboration_mode,
+            },
+        });
+        let event_id = self.next_internal_sub_id();
+        self.send_event_raw(Event { id: event_id, msg }).await;
     }
 
     pub(crate) async fn preview_settings(

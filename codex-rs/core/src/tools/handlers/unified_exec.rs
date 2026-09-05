@@ -104,7 +104,31 @@ pub(crate) fn get_command(
     shell_mode: &UnifiedExecShellMode,
     allow_login_shell: bool,
 ) -> Result<ResolvedCommand, String> {
-    let use_login_shell = match args.login {
+    fn resolve_use_login_shell(
+        login: Option<bool>,
+        allow_login_shell: bool,
+        shell_type: ShellType,
+    ) -> Result<bool, String> {
+        let use_login_shell = match login {
+            Some(true) if !allow_login_shell => {
+                return Err(
+                    "login shell is disabled by config; omit `login` or set it to false."
+                        .to_string(),
+                );
+            }
+            Some(true) if shell_type == ShellType::Sh => {
+                return Err(
+                    "login shell mode is not supported for `sh`; set `login` to false or omit it."
+                        .to_string(),
+                );
+            }
+            Some(use_login_shell) => use_login_shell,
+            None => allow_login_shell && shell_type != ShellType::Sh,
+        };
+        Ok(use_login_shell)
+    }
+
+    let zsh_fork_use_login_shell = match args.login {
         Some(true) if !allow_login_shell => {
             return Err(
                 "login shell is disabled by config; omit `login` or set it to false.".to_string(),
@@ -121,6 +145,8 @@ pub(crate) fn get_command(
                 .as_ref()
                 .map(|shell_str| get_shell_by_model_provided_path(&PathBuf::from(shell_str)));
             let shell = model_shell.as_ref().unwrap_or(session_shell.as_ref());
+            let use_login_shell =
+                resolve_use_login_shell(args.login, allow_login_shell, shell.shell_type)?;
             Ok(ResolvedCommand {
                 command: shell.derive_exec_args(&args.cmd, use_login_shell),
                 shell_type: shell.shell_type,
@@ -136,7 +162,12 @@ pub(crate) fn get_command(
             Ok(ResolvedCommand {
                 command: vec![
                     zsh_fork_config.shell_zsh_path.to_string_lossy().to_string(),
-                    if use_login_shell { "-lc" } else { "-c" }.to_string(),
+                    if zsh_fork_use_login_shell {
+                        "-lc"
+                    } else {
+                        "-c"
+                    }
+                    .to_string(),
                     args.cmd.clone(),
                 ],
                 shell_type: ShellType::Zsh,

@@ -126,9 +126,10 @@ fn test_get_command_resolves_powershell_by_type() -> anyhow::Result<()> {
     .map_err(anyhow::Error::msg)?;
     let expected_shell = get_shell(ShellType::PowerShell)
         .unwrap_or_else(|| codex_shell_command::shell_detect::ultimate_fallback_shell().into());
+    let use_login_shell = expected_shell.shell_type != ShellType::Sh;
     assert_eq!(
         resolved.command,
-        expected_shell.derive_exec_args("echo hello", /*use_login_shell*/ true)
+        expected_shell.derive_exec_args("echo hello", use_login_shell)
     );
     assert_eq!(resolved.shell_type, expected_shell.shell_type);
     Ok(())
@@ -213,6 +214,44 @@ async fn exec_command_rejects_login_when_selected_environment_disallows_it() {
         message,
         "login shell is disabled by config; omit `login` or set it to false."
     );
+}
+
+#[test]
+fn test_get_command_defaults_to_non_login_for_sh() -> anyhow::Result<()> {
+    let json = r#"{"cmd": "echo hello", "shell": "/bin/sh"}"#;
+    let args: ExecCommandArgs = parse_arguments(json)?;
+
+    let resolved = get_command(
+        &args,
+        Arc::new(default_user_shell()),
+        &UnifiedExecShellMode::Direct,
+        /*allow_login_shell*/ true,
+    )
+    .map_err(anyhow::Error::msg)?;
+
+    assert_eq!(resolved.shell_type, ShellType::Sh);
+    assert_eq!(resolved.command[1], "-c");
+    Ok(())
+}
+
+#[test]
+fn test_get_command_rejects_explicit_login_for_sh() -> anyhow::Result<()> {
+    let json = r#"{"cmd": "echo hello", "shell": "/bin/sh", "login": true}"#;
+    let args: ExecCommandArgs = parse_arguments(json)?;
+
+    let err = get_command(
+        &args,
+        Arc::new(default_user_shell()),
+        &UnifiedExecShellMode::Direct,
+        /*allow_login_shell*/ true,
+    )
+    .expect_err("explicit login should be rejected for sh");
+
+    assert!(
+        err.contains("not supported for `sh`"),
+        "unexpected error: {err}"
+    );
+    Ok(())
 }
 
 #[test]

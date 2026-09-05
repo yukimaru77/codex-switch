@@ -265,7 +265,7 @@ async fn start(
         call_id,
     );
     let Some(turn_environment) =
-        resolve_tool_environment(&step_context.environments, /*environment_id*/ None)?
+        resolve_tool_environment(session, turn, /*environment_id*/ None).await?
     else {
         return Err(FunctionCallError::RespondToModel(
             "unified exec is unavailable in this session".to_string(),

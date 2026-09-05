@@ -10,6 +10,7 @@ use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::boxed_tool_output;
+use crate::tools::handlers::RemoteCommandAdvisoryOptions;
 use crate::tools::handlers::apply_granted_turn_permissions;
 use crate::tools::handlers::apply_patch::intercept_apply_patch;
 use crate::tools::handlers::file_system_sandbox_policy_context_for_cwd;
@@ -17,6 +18,7 @@ use crate::tools::handlers::implicit_granted_permissions;
 use crate::tools::handlers::normalize_and_validate_additional_permissions;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
+use crate::tools::handlers::remote_command_advisory;
 use crate::tools::handlers::resolve_sandbox_permissions;
 use crate::tools::handlers::resolve_tool_environment;
 use crate::tools::handlers::rewrite_function_string_argument;
@@ -174,9 +176,11 @@ impl ExecCommandHandler {
         );
         let environment_args: ExecCommandEnvironmentArgs = parse_arguments(&arguments)?;
         let Some(turn_environment) = resolve_tool_environment(
-            &step_context.environments,
+            &session,
+            turn.as_ref(),
             environment_args.environment_id.as_deref(),
-        )?
+        )
+        .await?
         else {
             return Err(FunctionCallError::RespondToModel(
                 "unified exec is unavailable in this session".to_string(),
@@ -244,13 +248,18 @@ impl ExecCommandHandler {
         .await;
         let shell_mode =
             shell_mode_for_environment(&turn.unified_exec_shell_mode, environment.as_ref());
-        // Remote environments may use a different OS and must build commands with their native
-        // shell; fall back to the session shell when the environment did not report one.
-        let shell = turn_environment
-            .shell
-            .clone()
-            .map(Arc::new)
-            .unwrap_or_else(|| session.user_shell());
+        // Prefer the resolved environment's shell (detected by the remote probe,
+        // e.g. `/bin/sh` in a container that has no zsh) over the host login
+        // shell, so a remote command is not wrapped in a shell that does not
+        // exist there. An explicit `shell` argument from the model still wins
+        // inside `get_command`. A remote environment with no recorded shell
+        // must not inherit the host login shell either — its path (e.g.
+        // `/opt/homebrew/bin/bash`) usually does not exist on the remote.
+        let shell = match turn_environment.shell.clone() {
+            Some(shell) => Arc::new(shell),
+            None if environment.is_remote() => Arc::new(crate::shell::fallback_remote_shell()),
+            None => session.user_shell(),
+        };
         // TODO(anp): Resolve requested shells in remote environments instead of restricting
         // commands to the reported default shell.
         if environment.is_remote()
@@ -316,7 +325,7 @@ impl ExecCommandHandler {
         };
         let effective_additional_permissions = apply_granted_turn_permissions(
             context.session.as_ref(),
-            turn_environment,
+            &turn_environment,
             &cwd,
             sandbox_permissions,
             additional_permissions,
@@ -430,7 +439,18 @@ impl ExecCommandHandler {
             None => manager.exec_command(request, &context).await,
         };
         match result {
-            Ok(response) => Ok(boxed_tool_output(response)),
+            Ok(mut response) => {
+                if let Some(advisory) = remote_command_advisory(
+                    &hook_command,
+                    RemoteCommandAdvisoryOptions {
+                        env_switch_enabled: turn.config.features.get().enabled(Feature::EnvSwitch),
+                    },
+                ) {
+                    response.raw_output.extend_from_slice(b"\n");
+                    response.raw_output.extend_from_slice(advisory.as_bytes());
+                }
+                Ok(boxed_tool_output(response))
+            }
             Err(UnifiedExecError::SandboxDenied {
                 output,
                 original_token_count,
@@ -457,7 +477,13 @@ impl ExecCommandHandler {
                 }))
             }
             Err(err) => {
-                let message = format!("exec_command failed: {err:?}");
+                let mut message = format!("exec_command failed for `{hook_command}`: {err:?}");
+                if environment.is_remote() && message.contains("transport disconnected") {
+                    message.push_str(&format!(
+                        " — environment `{}` lost its exec-server connection; retry once, and if it still fails run env_switch again for this target to re-provision it",
+                        turn_environment.selection.environment_id
+                    ));
+                }
                 Err(FunctionCallError::RespondToModel(truncate_middle_chars(
                     &message,
                     EXEC_COMMAND_REJECTION_MAX_BYTES,

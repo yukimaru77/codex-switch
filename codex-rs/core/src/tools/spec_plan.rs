@@ -12,6 +12,9 @@ use crate::tools::handlers::CodeModeExecuteHandler;
 use crate::tools::handlers::CodeModeWaitHandler;
 use crate::tools::handlers::CurrentTimeHandler;
 use crate::tools::handlers::DynamicToolHandler;
+use crate::tools::handlers::EnvListHandler;
+use crate::tools::handlers::EnvStatusHandler;
+use crate::tools::handlers::EnvSwitchHandler;
 use crate::tools::handlers::ExecCommandHandler;
 use crate::tools::handlers::ExecCommandHandlerOptions;
 use crate::tools::handlers::GetContextRemainingHandler;
@@ -1085,7 +1088,8 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
 
     let allow_login_shell = any_environment_allows_login_shell(context.environments);
     let exec_permission_approvals_enabled = features.enabled(Feature::ExecPermissionApprovals);
-    let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
+    let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple)
+        || features.enabled(Feature::EnvSwitch);
     let options = ExecCommandHandlerOptions {
         allow_login_shell,
         exec_permission_approvals_enabled,
@@ -1242,7 +1246,8 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
     }
 
     if environment_mode.has_environment() && context.model_info.apply_patch_tool_type.is_some() {
-        let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
+        let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple)
+            || features.enabled(Feature::EnvSwitch);
         registry.add(ApplyPatchHandler::new(include_environment_id));
     }
 
@@ -1255,8 +1260,21 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
         registry.add(TestSyncHandler);
     }
 
+    if features.enabled(Feature::EnvSwitch) && environment_mode.has_environment() {
+        registry.add(EnvSwitchHandler);
+    }
+
+    if environment_mode.has_environment()
+        && (matches!(environment_mode, ToolEnvironmentMode::Multiple)
+            || features.enabled(Feature::EnvSwitch))
+    {
+        registry.add(EnvStatusHandler);
+        registry.add(EnvListHandler);
+    }
+
     if environment_mode.has_environment() && features.enabled(Feature::ViewImage) {
-        let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
+        let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple)
+            || features.enabled(Feature::EnvSwitch);
         registry.add(ViewImageHandler::new(ViewImageToolOptions {
             can_request_original_image_detail: can_request_original_image_detail(
                 context.model_info,

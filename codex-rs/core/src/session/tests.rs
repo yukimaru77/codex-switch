@@ -3,6 +3,7 @@ use super::step_settings::ResolvedStepSettings;
 use super::step_settings::StepSettings;
 use super::step_settings::StepSettingsUpdate;
 pub(crate) use super::step_settings::tests::update_selected_settings_for_test;
+use super::turn_context::NewTurnContextOptions;
 use super::turn_context::TurnEnvironment;
 use super::*;
 use crate::agents_md_manager::AgentsMdManager;
@@ -6474,7 +6475,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             .await;
     let resolved_turn_environments = resolved_environments.clone();
     let turn_environments = Arc::new(ThreadEnvironments::new(
-        environment_manager,
+        Arc::clone(&environment_manager),
         default_user_shell(),
         session_configuration.inferred_environment_config(),
         ShellSnapshot::disabled(),
@@ -6598,6 +6599,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         ),
         tool_search_handler_cache: Default::default(),
         turn_environments: Arc::clone(&turn_environments),
+        environment_manager,
     };
 
     let session = Session {
@@ -7920,6 +7922,72 @@ async fn turn_environments_set_primary_environment() {
 }
 
 #[tokio::test]
+async fn remote_environment_selection_does_not_retarget_turn_context_cwd() {
+    let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;
+    let local_cwd = session.get_config().await.cwd.clone();
+    let remote_cwd = AbsolutePathBuf::from_absolute_path("/remote/project").expect("remote cwd");
+    session
+        .services
+        .environment_manager
+        .upsert_environment(
+            "ssh:mine".to_string(),
+            "ws://127.0.0.1:8765".to_string(),
+            None,
+        )
+        .expect("seed remote environment");
+    session
+        .services
+        .environment_manager
+        .set_environment_metadata(
+            "ssh:mine".to_string(),
+            codex_exec_server::EnvironmentMetadata {
+                cwd: remote_cwd.as_path().display().to_string(),
+                shell: Some("/bin/sh".to_string()),
+            },
+        );
+
+    let (turn_context, _) = session
+        .new_turn_with_sub_id(
+            "sub-remote".to_string(),
+            SessionSettingsUpdate {
+                environments: Some(TurnEnvironmentSelections {
+                    legacy_fallback_cwd: local_cwd.clone(),
+                    environments: vec![
+                        TurnEnvironmentSelection {
+                            environment_id: "ssh:mine".to_string(),
+                            cwd: PathUri::from_abs_path(&remote_cwd),
+                            workspace_roots: Vec::new(),
+                            config: EnvironmentConfigState::FromThread,
+                        },
+                        local(local_cwd.clone()),
+                    ],
+                }),
+                ..Default::default()
+            },
+            NewTurnContextOptions::default(),
+        )
+        .await
+        .expect("turn should start");
+
+    let selected_environment = session
+        .services
+        .turn_environments
+        .selections()
+        .first()
+        .cloned()
+        .expect("remote environment selection should be preserved");
+    assert_eq!(selected_environment.environment_id, "ssh:mine");
+    assert_eq!(
+        &selected_environment.cwd,
+        &PathUri::from_abs_path(&remote_cwd)
+    );
+    #[allow(deprecated)]
+    let turn_cwd = turn_context.cwd.clone();
+    assert_eq!(turn_cwd, local_cwd);
+    assert_eq!(turn_context.config.cwd, local_cwd);
+}
+
+#[tokio::test]
 async fn default_turn_does_not_overlay_legacy_fallback_cwd_onto_stored_thread_environments() {
     let (session, _initial_turn, _rx) = make_session_and_context_with_rx().await;
     let session_cwd = session.get_config().await.cwd.clone();
@@ -8775,7 +8843,7 @@ where
         resolved_environments_for_configuration(&session_configuration, &default_environments)
             .await;
     let turn_environments = Arc::new(ThreadEnvironments::new(
-        environment_manager,
+        Arc::clone(&environment_manager),
         default_user_shell(),
         session_configuration.inferred_environment_config(),
         ShellSnapshot::disabled(),
@@ -8899,6 +8967,7 @@ where
         ),
         tool_search_handler_cache: Default::default(),
         turn_environments: Arc::clone(&turn_environments),
+        environment_manager,
     };
 
     let session = Arc::new(Session {

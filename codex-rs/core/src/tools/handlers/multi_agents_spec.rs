@@ -709,6 +709,9 @@ Requests for depth, thoroughness, research, investigation, or detailed codebase 
 - Do not duplicate work between the main rollout and delegated subtasks.
 - Avoid issuing multiple delegate calls on the same unresolved thread unless the new delegated task is genuinely different and necessary.
 - Narrow the delegated ask to the concrete output you need next.
+- When delegating work that continues on SSH hosts, inside Docker containers, or inside Docker containers on SSH hosts, describe the target host/container and required evidence, but do not hard-code raw `ssh ...` / `docker exec ...` wrappers as the subagent's ongoing work interface. If env_switch is available to the spawned agent, instruct the subagent to use it to register the durable execution environment and report the resulting environment_id. Raw ssh/docker is only for one-off probes, container creation/lifecycle steps, or fallback after env_switch is unavailable; it should not be the normal interface for ongoing work inside the target.
+- If the user names a target as `ssh hostname`, treat that as a target address, not as a requirement to keep issuing raw `ssh hostname ...` commands.
+- For remote/Docker evidence, ask for verifiable transcript, hostname/container/GPU details, and environment ids when available; do not require raw wrapper commands when an environment-aware tool call and status output proves where the work ran.
 - For coding tasks, prefer delegating concrete code-change worker subtasks over read-only explorer analysis when the subagent can make a bounded patch in a clear write scope.
 - When delegating coding work, instruct the submodel to edit files directly in its forked workspace and list the file paths it changed in the final answer.
 - For code-edit subtasks, decompose work so each delegated task has a disjoint write set.
@@ -744,6 +747,8 @@ You are then able to refer to this agent as `task_3` or `/root/task1/task_3` int
 The spawned agent will have the same tools as you and the ability to spawn its own subagents.
 {inherited_model_guidance}
 Only call this tool for a concrete, bounded subtask that can run independently alongside useful local work; otherwise continue locally.
+When delegating work that continues on SSH hosts, inside Docker containers, or inside Docker containers on SSH hosts, describe the target host/container and required evidence, but do not hard-code raw `ssh ...` / `docker exec ...` wrappers as the spawned agent's ongoing work interface. If env_switch is available to the spawned agent, instruct it to register the durable execution environment and report the resulting environment_id. Raw ssh/docker is only for one-off probes, container creation/lifecycle steps, or fallback after env_switch is unavailable; it should not be the normal interface for ongoing work inside the target.
+If the user names a target as `ssh hostname`, treat that as a target address, not as a requirement to keep issuing raw `ssh hostname ...` commands.
 It will be able to send you and other running agents messages, and its final answer will be provided to you when it finishes.
 The new agent's canonical task name will be provided to it along with the message.
 
