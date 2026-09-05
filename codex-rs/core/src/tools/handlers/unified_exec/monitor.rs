@@ -211,7 +211,14 @@ async fn handle_call(
             } else {
                 monitors
                     .iter()
-                    .map(|m| format!("{}  [{}]  {}", m.id, m.description, m.command.chars().take(80).collect::<String>()))
+                    .map(|m| {
+                        format!(
+                            "{}  [{}]  {}",
+                            m.id,
+                            m.description,
+                            m.command.chars().take(80).collect::<String>()
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join("\n")
             };

@@ -16,7 +16,13 @@ async fn long_lines_are_bounded_even_with_a_trailing_newline() {
     let mut count = 0;
     let mut deadline = None;
     let data = format!("{}\n", "x".repeat(100_000));
-    assert!(!extend_lines(&mut buffer, data.as_bytes(), &mut lines, &mut count, &mut deadline));
+    assert!(!extend_lines(
+        &mut buffer,
+        data.as_bytes(),
+        &mut lines,
+        &mut count,
+        &mut deadline
+    ));
     assert!(buffer.is_empty());
     assert!(lines.iter().all(|line| line.len() <= MAX_LINE_BYTES + 32));
     assert!(lines[0].starts_with("(line truncated)"));

@@ -499,10 +499,10 @@ impl UnifiedExecProcessManager {
                 Some(&mut process),
             )
             .await?;
-        Ok((
-            output,
-            process.expect("successful execution publishes its process"),
-        ))
+        let process = process.ok_or_else(|| {
+            UnifiedExecError::process_failed("monitor process was not published".to_string())
+        })?;
+        Ok((output, process))
     }
 
     pub(super) async fn exec_command_inner(

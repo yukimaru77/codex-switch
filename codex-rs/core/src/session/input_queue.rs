@@ -458,12 +458,20 @@ mod tests {
     async fn monitor_queue_is_bounded_and_reports_overflow() {
         let queue = InputQueue::new();
         for _ in 0..40 {
-            queue.enqueue_monitor_notification(crate::context::MonitorNotification::new("test", "output")).await;
+            queue
+                .enqueue_monitor_notification(crate::context::MonitorNotification::new(
+                    "test", "output",
+                ))
+                .await;
         }
         assert!(queue.has_trigger_turn_mailbox_items().await);
         let (items, _) = queue.drain_mailbox_input_items().await;
         assert_eq!(items.len(), 32);
-        assert!(serde_json::to_string(&items).unwrap().contains("queue full"));
+        assert!(
+            serde_json::to_string(&items)
+                .unwrap()
+                .contains("queue full")
+        );
         assert!(!queue.has_trigger_turn_mailbox_items().await);
     }
 

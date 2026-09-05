@@ -246,15 +246,35 @@ async fn monitor_accepts_immediately_completed_commands() -> anyhow::Result<()> 
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
     let server = start_mock_server().await;
-    let args = json!({"action":"start", "command":"printf MONITOR_FAST", "description":"fast test"}).to_string();
-    let mock = mount_sse_sequence(&server, vec![
-        sse(vec![ev_response_created("r1"), ev_function_call("start", "monitor", &args), ev_completed("r1")]),
-        sse(vec![ev_assistant_message("m1", "done"), ev_completed("r2")]),
-    ]).await;
-    let test = test_codex().with_config(|config| { config.features.enable(Feature::Monitor).unwrap(); }).build_with_auto_env(&server).await?;
+    let args =
+        json!({"action":"start", "command":"printf MONITOR_FAST", "description":"fast test"})
+            .to_string();
+    let mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("r1"),
+                ev_function_call("start", "monitor", &args),
+                ev_completed("r1"),
+            ]),
+            sse(vec![ev_assistant_message("m1", "done"), ev_completed("r2")]),
+        ],
+    )
+    .await;
+    let test = test_codex()
+        .with_config(|config| {
+            config.features.enable(Feature::Monitor).unwrap();
+        })
+        .build_with_auto_env(&server)
+        .await?;
     test.submit_turn("run the short monitor").await?;
     let requests = mock.requests();
-    assert!(requests[1].message_input_texts("user").iter().any(|text| text.contains("MONITOR_FAST") && text.contains("code 0")));
+    assert!(
+        requests[1]
+            .message_input_texts("user")
+            .iter()
+            .any(|text| text.contains("MONITOR_FAST") && text.contains("code 0"))
+    );
     test.codex.submit(Op::Shutdown).await?;
     Ok(())
 }
@@ -267,14 +287,41 @@ async fn monitor_obeys_read_only_sandbox() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let forbidden = directory.path().join("must-not-exist");
     let args = json!({"action":"start", "description":"sandbox check", "command":format!("printf forbidden > '{}'", forbidden.display())}).to_string();
-    let mock = mount_sse_sequence(&server, vec![
-        sse(vec![ev_response_created("r1"), ev_function_call("start", "monitor", &args), ev_completed("r1")]),
-        sse(vec![ev_assistant_message("m1", "denied"), ev_completed("r2")]),
-    ]).await;
-    let test = test_codex().with_config(|config| { config.features.enable(Feature::Monitor).unwrap(); }).build_with_auto_env(&server).await?;
-    test.submit_turn_with_permission_profile("try the monitored command", codex_protocol::models::PermissionProfile::read_only()).await?;
-    assert!(!forbidden.exists(), "monitor must use the normal command sandbox");
-    assert!(mock.function_call_output_text("start").unwrap().contains("failed to start monitor"));
+    let mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("r1"),
+                ev_function_call("start", "monitor", &args),
+                ev_completed("r1"),
+            ]),
+            sse(vec![
+                ev_assistant_message("m1", "denied"),
+                ev_completed("r2"),
+            ]),
+        ],
+    )
+    .await;
+    let test = test_codex()
+        .with_config(|config| {
+            config.features.enable(Feature::Monitor).unwrap();
+        })
+        .build_with_auto_env(&server)
+        .await?;
+    test.submit_turn_with_permission_profile(
+        "try the monitored command",
+        codex_protocol::models::PermissionProfile::read_only(),
+    )
+    .await?;
+    assert!(
+        !forbidden.exists(),
+        "monitor must use the normal command sandbox"
+    );
+    assert!(
+        mock.function_call_output_text("start")
+            .unwrap()
+            .contains("failed to start monitor")
+    );
     test.codex.submit(Op::Shutdown).await?;
     Ok(())
 }
