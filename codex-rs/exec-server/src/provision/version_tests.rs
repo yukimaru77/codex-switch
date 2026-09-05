@@ -1,0 +1,101 @@
+use codex_http_client::ClientRouteClass;
+use codex_http_client::HttpClientFactory;
+use codex_http_client::OutboundProxyPolicy;
+use codex_http_client::RouteAwareClientPool;
+use pretty_assertions::assert_eq;
+
+use super::canonicalize_exact_version;
+use super::is_dev_version;
+use super::parse_latest_tag_name;
+use crate::provision::VersionPolicy;
+
+#[test]
+fn dev_version_zero() {
+    assert!(is_dev_version("0.0.0"));
+}
+
+#[test]
+fn dev_version_suffix() {
+    assert!(is_dev_version("1.2.3-dev"));
+    assert!(is_dev_version("0.0.0-dev.1"));
+}
+
+#[test]
+fn not_dev_version() {
+    assert!(!is_dev_version("1.2.3"));
+    assert!(!is_dev_version("0.1.0"));
+}
+
+#[test]
+fn parse_tag_name_standard() {
+    let json = r#"{"tag_name":"rust-v1.2.3","name":"Codex 1.2.3"}"#;
+    assert_eq!(parse_latest_tag_name(json).unwrap(), "1.2.3");
+}
+
+#[test]
+fn parse_tag_name_with_prerelease() {
+    let json = r#"{"tag_name":"rust-v1.2.3-beta.1","name":"Codex 1.2.3-beta.1"}"#;
+    assert_eq!(parse_latest_tag_name(json).unwrap(), "1.2.3-beta.1");
+}
+
+#[test]
+fn parse_tag_name_missing() {
+    let json = r#"{"tag_name":"v1.2.3"}"#;
+    assert!(parse_latest_tag_name(json).is_err());
+}
+
+#[test]
+fn exact_policy_resolves_synchronously() {
+    // VersionPolicy::Exact does not hit the network; verify it round-trips.
+    let policy = VersionPolicy::Exact("v3.0.0".to_string());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime");
+    let http_client = RouteAwareClientPool::new(
+        HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+        ClientRouteClass::Other,
+    );
+    let v = rt.block_on(policy.resolve(&http_client)).expect("resolve");
+    assert_eq!(v, "3.0.0");
+}
+
+#[test]
+fn exact_policy_rejects_invalid_versions() {
+    for version in ["", "  ", "../1.2.3", "1.2.3/bad", "1.2.3 bad"] {
+        assert!(
+            canonicalize_exact_version(version).is_err(),
+            "version should be invalid: {version:?}"
+        );
+    }
+}
+
+#[test]
+fn exact_policy_reuses_only_on_exact_match() {
+    let policy = VersionPolicy::Exact("1.2.3".to_string());
+    assert!(policy.is_satisfied_by_existing("1.2.3"));
+    assert!(!policy.is_satisfied_by_existing("1.2.4"));
+}
+
+#[test]
+fn exact_policy_normalizes_leading_v() {
+    // "v1.2.3" and "1.2.3" must compare equal after normalization.
+    let policy = VersionPolicy::Exact("1.2.3".to_string());
+    assert!(policy.is_satisfied_by_existing("v1.2.3"));
+
+    let policy_v = VersionPolicy::Exact("v1.2.3".to_string());
+    assert!(policy_v.is_satisfied_by_existing("1.2.3"));
+}
+
+#[test]
+fn latest_policy_never_reuses_offline() {
+    // Latest must always re-check over the network, even if something exists.
+    assert!(!VersionPolicy::Latest.is_satisfied_by_existing("9.9.9"));
+}
+
+#[test]
+fn host_version_dev_build_does_not_reuse_before_resolving_latest() {
+    // The test binary's CARGO_PKG_VERSION is the dev placeholder "0.0.0"; a
+    // dev host must resolve Latest before deciding whether the managed remote
+    // binary is current enough to reuse.
+    assert!(!VersionPolicy::HostVersion.is_satisfied_by_existing("0.131.0"));
+}
